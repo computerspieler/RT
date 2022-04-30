@@ -1,5 +1,51 @@
 #include "render.h"
 
+SDL_Surface* screen;
+
+int initWindow()
+{
+	if(SDL_Init(SDL_INIT_VIDEO) < 0)
+		SDL_FATAL(SDL_Init);
+
+	screen = SDL_SetVideoMode(
+			SCREEN_WIDTH,
+			SCREEN_HEIGHT,
+			32, SDL_HWSURFACE
+		);
+
+	if(!screen)
+		SDL_FATAL(SDL_SetVideoMode);
+
+	SDL_WM_SetCaption("RayTracing", NULL);
+
+	return 0;
+}
+
+int updateWindow(char* output)
+{
+	SDL_Event ev;
+	int running = 1;
+
+    blitBuffer(screen, output, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    SDL_Flip(screen);
+
+	while(running)
+	{
+		if(!SDL_PollEvent(&ev))
+			continue;
+
+		switch(ev.type)
+		{
+			case SDL_QUIT:
+				running = 0;
+				break;
+		}
+	}
+
+	return 0;
+}
+
 void fillRect(SDL_Surface* s, int x, int y, int w, int h, Color c)
 {
 	for(int j = y; j < y+h; j++)

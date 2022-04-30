@@ -17,6 +17,11 @@ typedef struct
 	exit(EXIT_FAILURE);						\
 }
 
+#define SCREEN_WIDTH	640
+#define SCREEN_HEIGHT	480
+
+int initWindow();
+int updateWindow(char* output);
 void fillRect(SDL_Surface*, int x, int y, int w, int h, Color);
 void drawPixel(SDL_Surface*, int x, int y, Color c);
 void blitBuffer(SDL_Surface*, char*, int x, int y, int w, int h);

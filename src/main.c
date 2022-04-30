@@ -9,56 +9,39 @@
 #include <SDL/SDL.h>
 #include <string.h>
 
-#include "render.h"
+#include "util/render.h"
+#include "scene.h"
 
-const int SCREEN_WIDTH  = 640;
-const int SCREEN_HEIGHT = 480;
+#define CL_COMPILE_FLAGS "-D IN_OPENCL -I include -I kernel -I common"
+ 
+/*
+	float3 center;
+	float radius;
+	int material;
+*/
 
-SDL_Surface* screen;
+Material sample_mats[] = {
+    (Material){
+        .color = (float3) {0.5f, 0.5f, 0}
+    },
+    (Material){
+        .color = (float3) {0, 0.5f, 0}
+    },
+};
+Sphere sample_spheres[] = {
+    (Sphere){
+        .center = (float3) {1, 0, 0},
+        .radius = 5,
+        .material = 0
+    }
+};
+Scene sample_scene = {
+    .materials = sample_mats,
+    .materials_count = 1,
 
-int initWindow()
-{
-	if(SDL_Init(SDL_INIT_VIDEO) < 0)
-		SDL_FATAL(SDL_Init);
-
-	screen = SDL_SetVideoMode(
-			SCREEN_WIDTH,
-			SCREEN_HEIGHT,
-			32, SDL_HWSURFACE
-		);
-
-	if(!screen)
-		SDL_FATAL(SDL_SetVideoMode);
-
-	SDL_WM_SetCaption("RayTracing", NULL);
-
-	return 0;
-}
-
-int updateWindow(char* output)
-{
-	SDL_Event ev;
-	int running = 1;
-
-    blitBuffer(screen, output, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    SDL_Flip(screen);
-
-	while(running)
-	{
-		if(!SDL_PollEvent(&ev))
-			continue;
-
-		switch(ev.type)
-		{
-			case SDL_QUIT:
-				running = 0;
-				break;
-		}
-	}
-
-	return 0;
-}
+    .spheres = sample_spheres,
+    .spheres_count = 1
+};
 
 typedef struct {  
     cl_platform_id platform;
@@ -69,14 +52,37 @@ typedef struct {
 
     cl_program program;
     cl_kernel kernel;
-
-    cl_mem output;
 } OpenCL_FullContext;
+
+void CL_CALLBACK build_notify (cl_program program, void *user_data)
+{
+    char *buffer = NULL;
+    size_t buffer_len;
+    cl_int err;
+    cl_build_status status;
+    OpenCL_FullContext *cl = user_data;
+
+    err = clGetProgramBuildInfo(program, cl->device, CL_PROGRAM_BUILD_STATUS, sizeof(status), &status, NULL);
+    if(err != CL_SUCCESS)
+        printf("clGetProgramBuildInfo: %d\n", err);
+
+    else if(status == CL_BUILD_ERROR) {
+        err = clGetProgramBuildInfo(program, cl->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &buffer_len);
+        buffer = malloc(buffer_len);
+        err = clGetProgramBuildInfo(program, cl->device, CL_PROGRAM_BUILD_LOG, buffer_len, buffer, NULL);
+        if(err != CL_SUCCESS)
+            printf("clGetProgramBuildInfo(2): %d\n", err);
+        else
+            printf("Error:\n%.*s\n", (int) buffer_len, buffer);
+
+        free(buffer);
+    }
+}
 
 // TODO: Better error handling for OpenCL
 cl_int opencl_init(OpenCL_FullContext *cl)
 {
-    cl_int err;
+    cl_int err = CL_SUCCESS;
 
     clGetPlatformIDs(1, &cl->platform, NULL);
     clGetDeviceIDs(cl->platform, CL_DEVICE_TYPE_GPU, 1, &cl->device, NULL);
@@ -141,7 +147,7 @@ cl_int opencl_build_program(FILE *program, OpenCL_FullContext *cl, char* kernel_
         return err;
     }
     
-    err = clBuildProgram(cl->program, 1, &cl->device, NULL, NULL, NULL);
+    err = clBuildProgram(cl->program, 1, &cl->device, CL_COMPILE_FLAGS, build_notify, cl);
     if(err != CL_SUCCESS)
     {
         printf("clBuildProgram: ");
@@ -155,19 +161,28 @@ cl_int opencl_build_program(FILE *program, OpenCL_FullContext *cl, char* kernel_
     return err;
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
     FILE* fi;
     cl_int err;
-    char* output = NULL;
     OpenCL_FullContext cl;
+
+    cl_mem output = NULL;
+    cl_mem sphere = NULL;
+    cl_mem material = NULL;
+    char* output_raw = NULL;
+
+    if(argc != 2) {
+        printf("Only the filename");
+        return -1;
+    }
     
     printf("Opening the context\n");
     err = opencl_init(&cl);
     if(err != CL_SUCCESS)
         goto exit;
 
-    fi = fopen("kernel.cl", "r");
+    fi = fopen(argv[1], "r");
     if(!fi) {
         perror("fopen");
         goto exit;
@@ -178,59 +193,126 @@ int main(void)
     if(err != CL_SUCCESS)
         goto exit;
     fclose(fi);
-
+    
     printf("Creating the output buffer\n");
     const cl_image_format fmt = {
         .image_channel_order = CL_RGBA,
         .image_channel_data_type = CL_UNSIGNED_INT8
     };
 
-    cl.output = clCreateImage2D(
+    output = clCreateImage2D(
         cl.context,
         CL_MEM_WRITE_ONLY,
         &fmt,
         SCREEN_WIDTH, SCREEN_HEIGHT, 0,
         NULL, &err
     );
+
     if(err != CL_SUCCESS)
+    {
+        printf("clCreateImage2D: ");
         goto exit;
+    }
+
+    sphere = clCreateBuffer(
+        cl.context,
+        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        sample_scene.spheres_count * sizeof(Sphere),
+        sample_scene.spheres,
+        &err
+    );
+
+    if(err != CL_SUCCESS)
+    {
+        printf("clCreateBuffer: ");
+        goto exit;
+    }
+
+    material = clCreateBuffer(
+        cl.context,
+        CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_ALLOC_HOST_PTR,
+        sample_scene.materials_count * sizeof(Material),
+        sample_scene.materials,
+        &err
+    );
+
+    if(err != CL_SUCCESS)
+    {
+        printf("clCreateBuffer: ");
+        goto exit;
+    }
 
     printf("Here we go\n");
-    clSetKernelArg(cl.kernel, 0, sizeof(cl_mem), (void*) &cl.output);
+    clSetKernelArg(cl.kernel, 0, sizeof(cl_mem), (void*) &sphere);
+    clSetKernelArg(cl.kernel, 1, sizeof(cl_mem), (void*) &material);
+    clSetKernelArg(cl.kernel, 2, sizeof(cl_mem), (void*) &output);
 
-    output = malloc(SCREEN_WIDTH*SCREEN_HEIGHT*4);
-    memset(output, 0, SCREEN_WIDTH*SCREEN_HEIGHT*4);
+    output_raw = malloc(SCREEN_WIDTH*SCREEN_HEIGHT*4);
+    memset(output_raw, 0, SCREEN_WIDTH*SCREEN_HEIGHT*4);
 
+    // Run the program
     size_t offset[3] = {0};
     size_t size[3] = {SCREEN_WIDTH, SCREEN_HEIGHT,1};
     err = clEnqueueNDRangeKernel(cl.queue, cl.kernel, 2, offset, size, NULL, 0, NULL, NULL);
     if(err != CL_SUCCESS)
+    {
+        printf("clEnqueueNDRangeKernel: ");
         goto exit;
+    }
+
+    err = clEnqueueWriteBuffer(
+        cl.queue, sphere, CL_FALSE, 0,
+        sample_scene.spheres_count * sizeof(Sphere),
+        sample_scene.spheres,
+        0,
+        NULL, NULL
+    );
+    if(err != CL_SUCCESS)
+    {
+        printf("clEnqueueWriteBuffer: ");
+        goto exit;
+    }
+
+    err = clEnqueueWriteBuffer(
+        cl.queue, material, CL_FALSE, 0,
+        sample_scene.materials_count * sizeof(Material),
+        sample_scene.materials,
+        0,
+        NULL, NULL
+    );
+    if(err != CL_SUCCESS)
+    {
+        printf("clEnqueueWriteBuffer: ");
+        goto exit;
+    }
 
     size_t origin[3] = {0};
     size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT,1};
-    err = clEnqueueReadImage(cl.queue, cl.output, CL_TRUE, origin, region, 0, 0, output, 0, NULL, NULL);
+    err = clEnqueueReadImage(cl.queue, output, CL_TRUE, origin, region, 0, 0, output_raw, 0, NULL, NULL);
     if(err != CL_SUCCESS)
+    {
+        printf("clEnqueueReadImage: ");
         goto exit;
+    }
 
     printf("Done !\n");
 
     if(initWindow())
         goto exit;
 
-    updateWindow(output);
+    updateWindow(output_raw);
 
 exit:
     printf("Error code : %i\n", err);
     printf("Exit !\n");
 
-    clReleaseMemObject(cl.output);
+    clReleaseMemObject(output);
     clReleaseKernel(cl.kernel);
     clReleaseProgram(cl.program);
     clReleaseCommandQueue(cl.queue);
     clReleaseContext(cl.context);
 
-    if(output)
-        free(output);
+    if(output_raw)
+        free(output_raw);
     return 0;
 }

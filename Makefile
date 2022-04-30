@@ -1,12 +1,12 @@
-SRCS_DIRS=$(sort $(dir $(wildcard src/*/))) src/
+SRCS_DIRS=$(sort $(dir $(wildcard src/*/))) src/ common/
 
 SRCS=$(foreach DIR,$(SRCS_DIRS),$(wildcard $(DIR)*.c))
-DEPS=$(patsubst src/%,bin/deps/%.d,$(SRCS))
-OBJS=$(patsubst src/%,bin/objs/%.o,$(SRCS))
+DEPS=$(patsubst %,bin/deps/%.d,$(SRCS))
+OBJS=$(patsubst %,bin/objs/%.o,$(SRCS))
 
-CC=gcc
-LD=gcc
-CCFLAGS=-Wall -Wextra $(patsubst %/,-I%,$(SRCS_DIRS)) -c \
+CC=clang
+LD=clang
+CCFLAGS=-Wall -Wextra -Isrc -Iinclude -Icommon -c \
 	-Wno-incompatible-pointer-types
 LDFLAGS=-lm `sdl-config --cflags --libs` -lOpenCL
 
@@ -30,11 +30,11 @@ bin/release: LDFLAGS := $(LDFLAGS) -O2
 bin/release: $(OBJS)
 	$(LD) -o $@ $^ $(LDFLAGS)
 
-bin/objs/%.c.o: src/%.c
+bin/objs/%.c.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCFLAGS) -o $@ $<
 
-bin/deps/%.c.d: src/%.c
+bin/deps/%.c.d: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCFLAGS) -M -o $@ $< -MT $(patsubst bin/deps/%,bin/objs/%,$@)
 
