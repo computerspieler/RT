@@ -36,5 +36,5 @@ bin/objs/%.c.o: %.c
 
 bin/deps/%.c.d: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CCFLAGS) -M -o $@ $< -MT $(patsubst bin/deps/%,bin/objs/%,$@)
+	$(CC) $(CCFLAGS) -M -o $@ $< -MT $(patsubst bin/deps/%.d,bin/objs/%.o,$@)
 

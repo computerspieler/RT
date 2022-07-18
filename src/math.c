@@ -2,5 +2,5 @@
 
 double rsqrt(double x)
 {
-    return sqrt(x);
+    return 1 / sqrt(x);
 }

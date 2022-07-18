@@ -1,8 +1,14 @@
 #ifndef _RENDER_H_
 #define _RENDER_H_
 
+#include <CL/cl.h>
+#include <CL/cl_platform.h>
+#include <CL/opencl.h>
 #include <SDL/SDL.h>
 #include <SDL/SDL_video.h>
+
+#include "cl_handler.h"
+#include "camera.h"
 
 typedef struct
 {
@@ -18,12 +24,12 @@ typedef struct
 }
 
 #define SCREEN_WIDTH	640
-#define SCREEN_HEIGHT	480
+#define SCREEN_HEIGHT	640
 
 int initWindow();
-int updateWindow(char* output);
+int updateWindow(OpenCL_FullContext *cl, Camera *c);
 void fillRect(SDL_Surface*, int x, int y, int w, int h, Color);
 void drawPixel(SDL_Surface*, int x, int y, Color c);
-void blitBuffer(SDL_Surface*, char*, int x, int y, int w, int h);
+void blitBuffer(SDL_Surface*, cl_uchar4*, int x, int y, int w, int h);
 
 #endif

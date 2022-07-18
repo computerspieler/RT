@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 
 make &&
-./bin/debug kernel/main.cl
+gdb --args ./bin/debug kernel common
