@@ -14,7 +14,7 @@ void CL_CALLBACK build_notify (cl_program program, void *user_data)
     size_t buffer_len;
     cl_int err;
     cl_build_status status;
-    OpenCL_FullContext *cl = user_data;
+    OpenCL_GeneralContext *cl = user_data;
 
     err = clGetProgramBuildInfo(program, cl->device, CL_PROGRAM_BUILD_STATUS, sizeof(status), &status, NULL);
     CHECK_ERR(clGetProgramBuildInfo, end);
@@ -33,25 +33,28 @@ end:
     return;
 }
 
-cl_int opencl_init(OpenCL_FullContext *cl)
+cl_int opencl_init_general_context(OpenCL_GeneralContext *cl_gen)
 {
     cl_int err = CL_SUCCESS;
 
-    err = clGetPlatformIDs(1, &cl->platform, NULL);
+    err = clGetPlatformIDs(1, &cl_gen->platform, NULL);
     CHECK_ERR(clGetPlatformIDs, end);
-    err = clGetDeviceIDs(cl->platform, CL_DEVICE_TYPE_GPU, 1, &cl->device, NULL);
+    err = clGetDeviceIDs(cl_gen->platform, CL_DEVICE_TYPE_GPU, 1, &cl_gen->device, NULL);
     CHECK_ERR(clGetDeviceIDs, end);
-    cl->context = clCreateContext(NULL, 1, &cl->device, NULL, NULL, &err);
+    cl_gen->context = clCreateContext(NULL, 1, &cl_gen->device, NULL, NULL, &err);
     CHECK_ERR(clCreateContext, end);
-    cl->queue = clCreateCommandQueueWithProperties(cl->context, cl->device, NULL, &err);
+    cl_gen->queue = clCreateCommandQueueWithProperties(cl_gen->context, cl_gen->device, NULL, &err);
     CHECK_ERR(clCreateCommandQueueWithProperties, end);
-
-    cl->buffers = array_create(sizeof(CLBuffer));
-    cl->programs_src = array_create(sizeof(char*));
-    cl->programs_src_len = array_create(sizeof(size_t));
-
 end:
     return err;
+}
+cl_int opencl_init_program_context(OpenCL_ProgramContext *cl_prg)
+{
+    cl_prg->buffers = array_create(sizeof(CLBuffer));
+    cl_prg->programs_src = array_create(sizeof(char*));
+    cl_prg->programs_src_len = array_create(sizeof(size_t));
+
+    return CL_SUCCESS;
 }
 
 int read_full_file(FILE *file, char **file_str, size_t *file_str_len)
@@ -83,7 +86,7 @@ int read_full_file(FILE *file, char **file_str, size_t *file_str_len)
     return 0;
 }
 
-cl_int opencl_add_program_source(OpenCL_FullContext *cl, FILE *f)
+cl_int opencl_add_program_source(OpenCL_ProgramContext *cl_prg, FILE *f)
 {
     char *program_str;
     size_t program_str_len;
@@ -92,43 +95,43 @@ cl_int opencl_add_program_source(OpenCL_FullContext *cl, FILE *f)
         &program_str, &program_str_len))
         return -1;
     
-    array_push(&cl->programs_src, &program_str);
-    array_push(&cl->programs_src_len, &program_str_len);
+    array_push(&cl_prg->programs_src, &program_str);
+    array_push(&cl_prg->programs_src_len, &program_str_len);
 
     return CL_SUCCESS;
 }
 
-cl_int opencl_build_program(OpenCL_FullContext *cl, char* kernel_entry, const char *compile_flags)
+cl_int opencl_build_program(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, char* kernel_entry, const char *compile_flags)
 {
     cl_int err;
     
-    cl->program = clCreateProgramWithSource(cl->context, 
-        array_size(&cl->programs_src), 
-        (const char **) cl->programs_src.array, 
-        cl->programs_src_len.array,
+    cl_prg->program = clCreateProgramWithSource(cl_gen->context, 
+        array_size(&cl_prg->programs_src), 
+        (const char **) cl_prg->programs_src.array, 
+        cl_prg->programs_src_len.array,
         &err
     );
     CHECK_ERR(clCreateProgramWithSource, end);
 
     TRY(clBuildProgram, end,
-        cl->program, 1, &cl->device, compile_flags, build_notify, cl
+        cl_prg->program, 1, &cl_gen->device, compile_flags, build_notify, cl_gen
     );
 
-    cl->kern = clCreateKernel(cl->program, kernel_entry, &err);
+    cl_prg->kern = clCreateKernel(cl_prg->program, kernel_entry, &err);
     CHECK_ERR(clCreateKernel, end);
 
 end:  
     return err;
 }
 
-int opencl_add_input_buffer(OpenCL_FullContext *cl, void *buf, size_t len)
+int opencl_add_input_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, void *buf, size_t len)
 {
     cl_int err;
     CLBuffer buffer;
     
     buffer = (CLBuffer) {
         .cl = clCreateBuffer(
-            cl->context,
+            cl_gen->context,
             CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
             len, buf,
             &err
@@ -139,13 +142,13 @@ int opencl_add_input_buffer(OpenCL_FullContext *cl, void *buf, size_t len)
         .input = true
     };
     CHECK_ERR(clCreateBuffer, exit);    
-    array_push(&cl->buffers, &buffer);
+    array_push(&cl_prg->buffers, &buffer);
 
 exit:
     return err;
 }
 
-int opencl_add_output_image(OpenCL_FullContext *cl, cl_uchar4 **raw, int width, int height)
+int opencl_add_output_image(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, cl_uchar4 **raw, int width, int height)
 {
     cl_int err;
 
@@ -164,7 +167,7 @@ int opencl_add_output_image(OpenCL_FullContext *cl, cl_uchar4 **raw, int width, 
     
     CLBuffer buffer = {
         .cl = clCreateImage(
-            cl->context, CL_MEM_WRITE_ONLY,
+            cl_gen->context, CL_MEM_WRITE_ONLY,
             &fmt, &output_buffer_desc,
             NULL, &err
         ),
@@ -174,34 +177,34 @@ int opencl_add_output_image(OpenCL_FullContext *cl, cl_uchar4 **raw, int width, 
         .len = width * height * sizeof(cl_uchar4)
     };
     CHECK_ERR(clCreateImage, exit);
-    array_push(&cl->buffers, &buffer);
+    array_push(&cl_prg->buffers, &buffer);
 
 exit:
     return err;   
 }
 
-void opencl_run(OpenCL_FullContext *cl, size_t *origin, size_t *region)
+void opencl_run(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, size_t *origin, size_t *region)
 {
     size_t i = 0;
     cl_int err;
 
-    for(CLBuffer* it = cl->buffers.array; i < array_size(&cl->buffers); it ++, i++)
-        clSetKernelArg(cl->kern, i, sizeof(cl_mem), &it->cl);
+    for(CLBuffer* it = cl_prg->buffers.array; i < array_size(&cl_prg->buffers); it ++, i++)
+        clSetKernelArg(cl_prg->kern, i, sizeof(cl_mem), &it->cl);
 
     TRY(clEnqueueNDRangeKernel, exit,
-        cl->queue, cl->kern, 2, origin, region, NULL, 0, NULL, NULL);
+        cl_gen->queue, cl_prg->kern, 2, origin, region, NULL, 0, NULL, NULL);
 
     i = 0;
-    for(CLBuffer* it = cl->buffers.array; i < array_size(&cl->buffers); it ++, i++) {
+    for(CLBuffer* it = cl_prg->buffers.array; i < array_size(&cl_prg->buffers); it ++, i++) {
         if(it->input && !it->image) {
             TRY(clEnqueueWriteBuffer, exit,
-                cl->queue, it->cl, CL_FALSE, 0,
+                cl_gen->queue, it->cl, CL_FALSE, 0,
                 it->len, it->buf,
                 0, NULL, NULL
             );
         } else if(!it->input && it->image) {
             TRY(clEnqueueReadImage, exit,
-                cl->queue, it->cl, CL_TRUE,
+                cl_gen->queue, it->cl, CL_TRUE,
                 origin, region,
                 0, 0,
                 it->buf, 0,

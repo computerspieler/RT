@@ -12,6 +12,7 @@ struct Camera
     double3 rot;
 
     double near;
+    double max_t;
     double fov;
     int2 viewport;
 

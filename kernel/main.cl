@@ -1,8 +1,10 @@
 #ifndef IN_OPENCL
 #define IN_OPENCL
+#include "bvhtree.h"
 #include <opencl-c-base.h>
 #endif
 
+#include "bvhtree.h"
 #include "double3.h"
 #include "bbox.h"
 #include "camera.h"
@@ -34,10 +36,10 @@ bool interactionRayBBox(BBox3 b, Ray r)
 		), (double) max(t1.z, t2.z)
 	);
 
-	return tmax > tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin < r.max_t;
+	return tmax > tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin < r.max_t;;
 }
 
-bool interactionRayTriangle(Triangle t, __global double3 *vertices, Ray r, SurfaceInteraction *i)
+bool interactionRayTriangle(Triangle t, __constant double3 *vertices, Ray r, SurfaceInteraction *i)
 {
 	double dotNormalDirection, time;
 	double3 C, P;
@@ -80,11 +82,55 @@ bool interactionRayTriangle(Triangle t, __global double3 *vertices, Ray r, Surfa
 	return true;
 }
 
+bool traverseScene(Ray r, __constant double3 *vertices, __constant double3 *normals,
+	__constant double2 *uv, __constant Triangle *tris,
+	__constant ObjectMetadata *metadata,
+	__constant BVHNode *bvh_nodes,
+	SurfaceInteraction *interaction)
+{
+	int stack[MAX_TREE_DEPTH];
+	int seen[MAX_TREE_DEPTH];
+	bool interact;
+	int last_node = 0;
+
+	stack[0] = metadata->tree.root;
+	seen[0] = 0;
+	interact = false;
+	while(last_node >= 0) {	
+		if(seen[last_node] == 2 || stack[last_node] == -1)
+			last_node --;
+		else if(seen[last_node] == 1) {
+			seen[last_node] = 2;
+			last_node ++;
+			seen[last_node] = 0;
+			stack[last_node] = bvh_nodes[stack[last_node-1]].sons.y;
+		} else if(!interactionRayBBox(bvh_nodes[stack[last_node]].bounds, r))
+			last_node --;
+		else if(bvh_nodes[stack[last_node]].sons.x == -1 && bvh_nodes[stack[last_node]].sons.y == -1) {
+			for(int i = bvh_nodes[stack[last_node]].triangle_start; i < bvh_nodes[stack[last_node]].triangle_end; i ++) {
+				if(interactionRayTriangle(tris[i], vertices, r, interaction)) {
+					r.max_t = interaction->time;
+					interact = true;
+				}
+			}
+			last_node --;
+		} else {
+			seen[last_node] = 1;
+			last_node ++;
+			seen[last_node] = 0;
+			stack[last_node] = bvh_nodes[stack[last_node-1]].sons.x;
+		}
+	}
+
+	return interact;
+}
+
 kernel void compute_ray(
-	__global Camera *camera, __global Material *materials,
-	__global double3 *vertices, __global double3 *normals,
-	__global double3 *uv, __global Triangle *tris,
-	__global ObjectMetadata *metadata,
+	__constant Camera *camera, __constant Material *materials,
+	__constant double3 *vertices, __constant double3 *normals,
+	__constant double2 *uv, __constant Triangle *tris,
+	__constant ObjectMetadata *metadata,
+	__constant BVHNode *bvh_nodes,
 	__write_only image2d_t output
 )
 {
@@ -107,33 +153,15 @@ kernel void compute_ray(
 		.origin = tmp + camera->pos,
 		.direction = double3_normalize(tmp),
 		.min_t = 0,
-		.max_t = 10
+		.max_t = camera->max_t
 	};
-
-	bool inside;
 	
-	inside = interactionRayBBox(metadata->bounds, ray);
-
-	if(!inside) {
+	if(!traverseScene(ray, vertices, normals, uv, tris, metadata, bvh_nodes, &interaction)) {
 		write_imagei(output, on_screen_pos, default_col);
 		return;
 	}
 
-	int i;
-	nearestInteraction.time = -1;
-	for(i = 0; i < metadata->triangles_count; i++) {
-		if(interactionRayTriangle(tris[i], vertices, ray, &interaction)) {
-			nearestInteraction = interaction;
-			ray.max_t = nearestInteraction.time;
-		}
-	}
-
-	if(nearestInteraction.time < 0) {
-		write_imagei(output, on_screen_pos, default_col);
-		return;
-	}
-	
-	const double angle = fabs(double3_dot(nearestInteraction.n, ray.direction)); 
+	const double angle = fabs(double3_dot(interaction.n, ray.direction)); 
 	const int4 col = {angle * 255, angle * 255, angle * 255, angle * 255};
 	write_imagei(output, on_screen_pos, col);
 } 	

@@ -21,6 +21,11 @@ double3 bbox_corner(BBox3 b, int corner)
 	return f;
 }
 
+double3 bbox_center(BBox3 b)
+{
+	return double3_smul(0.5, double3_add(b.max, b.min));
+}
+
 BBox3 bbox_p_union(BBox3 b, double3 p)
 {
 	return bbox_create(
@@ -117,8 +122,8 @@ double3 bbox_p_offset(BBox3 b, double3 p)
 	double3 o = double3_diff(p, b.min);
 
 	if(b.max.x > b.min.x) o.x /= b.max.x - b.min.x;
-	if(b.max.y > b.min.y) o.x /= b.max.y - b.min.y;
-	if(b.max.z > b.min.z) o.x /= b.max.z - b.min.z;
+	if(b.max.y > b.min.y) o.y /= b.max.y - b.min.y;
+	if(b.max.z > b.min.z) o.z /= b.max.z - b.min.z;
 
 	return o;
 }

@@ -1,6 +1,7 @@
 #ifndef _OBJECT_H_
 #define _OBJECT_H_
 
+#include "bvhtree.h"
 #include "double3.h"
 #include "bbox.h"
 #include "material.h"
@@ -36,7 +37,7 @@ struct ObjectMetadata
     
     size_t materials_count;
 
-    BBox3 bounds;
+    BVHTree tree;
 };
 
 typedef struct Object Object;

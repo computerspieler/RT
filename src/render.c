@@ -38,7 +38,7 @@ long long get_current_time()
 	return te.tv_sec * 1000LL + te.tv_usec / 1000;
 }
 
-int updateWindow(OpenCL_FullContext *cl, Camera *c)
+int updateWindow(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, Camera *c)
 {
 	cl_int err;
 	SDL_Event ev;
@@ -53,14 +53,14 @@ int updateWindow(OpenCL_FullContext *cl, Camera *c)
 	long long date_last_refresh = get_current_time();
 
     TRY(opencl_add_output_image, exit,
-        cl, &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
+        cl_gen, cl_prg, (cl_uchar4**) &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
     );
     
 	while(running)
 	{
 		SDL_LockSurface(screen);
 		long long start = get_current_time();
-		opencl_run(cl, origin, region);
+		opencl_run(cl_gen, cl_prg, origin, region);
 		long long program_end = get_current_time();
 		SDL_UnlockSurface(screen);
 		
@@ -74,7 +74,10 @@ int updateWindow(OpenCL_FullContext *cl, Camera *c)
 		
 		if(end - date_last_refresh >= 1000L) {
 			date_last_refresh = end;
-			printf("FPS: %lld\n", nb_cycles * 1000LL / time_spent);
+			if(nb_cycles * 1000LL / time_spent > 0)
+				printf("FPS: %lld\n", nb_cycles * 1000LL / time_spent);
+			else
+				printf("SPF: %lld\n", time_spent / 1000LL);
 			printf("OpenCL: %lld%%\n", time_spent_opencl * 100LL / time_spent);
 			time_spent = 0;
 			time_spent_opencl = 0;

@@ -12,6 +12,7 @@ struct BBox3
 
 BBox3 bbox_create(double3 min, double3 max);
 double3 bbox_corner(BBox3 b, int corner);
+double3 bbox_center(BBox3 b);
 BBox3 bbox_p_union(BBox3 b, double3 p);
 BBox3 bbox_b_union(BBox3 b1, BBox3 b2);
 BBox3 bbox_b_intersection(BBox3 b1, BBox3 b2);

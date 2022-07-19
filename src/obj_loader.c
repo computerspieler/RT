@@ -6,6 +6,7 @@
 #include <strings.h>
 
 #include "bbox.h"
+#include "bvhtree.h"
 #include "double3.h"
 #include "typedef.h"
 #include "material.h"
@@ -73,7 +74,6 @@ int loadFromObj(FILE *f, Object *obj, ObjectMetadata *metadata)
     double3 vertex;
     double2 vertex_uv;
     Triangle triangle;
-    BBox3 bounds;
 
     int res;
     char buffer[1024];
@@ -108,15 +108,6 @@ int loadFromObj(FILE *f, Object *obj, ObjectMetadata *metadata)
 
         if(strcmp(buffer, "v") == 0) {
             fscanf(f, "%lf %lf %lf\n", &vertex.x, &vertex.y, &vertex.z);
-
-            if(array_size(&vertices) == 0) {
-                bounds = (BBox3) {
-                    .max = vertex,
-                    .min = vertex
-                };
-            } else
-                bounds = bbox_p_union(bounds, vertex);
-
             array_push(&vertices, &vertex);
         } else if(strcmp(buffer, "vn") == 0) {
             fscanf(f, "%lf %lf %lf\n", &vertex.x, &vertex.y, &vertex.z);
@@ -190,7 +181,6 @@ int loadFromObj(FILE *f, Object *obj, ObjectMetadata *metadata)
     metadata->vertices_tex_count = array_size(&tex);
     metadata->vertices_count = array_size(&vertices);
     metadata->vertices_normal_count = array_size(&normals);
-    metadata->bounds = bounds;
 
     obj->triangles = triangles.array;
     obj->vertices = vertices.array;
@@ -209,6 +199,8 @@ int loadFromObj(FILE *f, Object *obj, ObjectMetadata *metadata)
         obj->triangles[i].det = -double3_dot(obj->triangles[i].surfaceNormal, points[0]);
     }
 
+    buildBVHTreeFromObject(*obj, metadata);
+
     printf("Object file sucessfully loaded\n");
 
     return 0;
@@ -223,6 +215,7 @@ err:
     return -1;
 }
 
+/*
 int mergeObjects(Object *obj1, ObjectMetadata *obj1_meta, Object *obj2, ObjectMetadata *obj2_meta, Object *output, ObjectMetadata *output_meta)
 {
     assert(obj1);
@@ -284,4 +277,259 @@ int mergeObjects(Object *obj1, ObjectMetadata *obj1_meta, Object *obj2, ObjectMe
         };
 
     return 0;
+}
+*/
+
+#define BUCKET_COUNT 10
+
+typedef struct PrimitiveInfo PrimitiveInfo;
+struct PrimitiveInfo
+{
+    BBox3 bounds;
+    double3 center;
+};
+
+int buildBVHTreeSAH(Object obj, ObjectMetadata *obj_meta, Array *nodes, PrimitiveInfo *primitives_info, Triangle *tris, int start, int end)
+{
+    int dim;
+    BVHNode output;
+    BBox3 bounds, centroidBounds;
+
+    if(end <= start)
+        return -1;
+
+    // If it's only one triangle
+    if((end - start) == 1) {
+        output = (BVHNode) {
+            .bounds = primitives_info[start].bounds,
+            .triangle_start = start,
+            .triangle_end = end,
+            .sons.x = -1,
+            .sons.y = -1
+        };
+        array_push(nodes, &output);
+        return array_size(nodes) - 1;
+    }
+
+    bounds = primitives_info[start].bounds;
+    for(int i = start+1; i < end; i++)
+        bounds = bbox_b_union(bounds, primitives_info[i].bounds);
+    
+    centroidBounds = (BBox3) {
+        .min = primitives_info[start].center,
+        .max = primitives_info[start].center
+    };
+    for(int i = start+1; i < end; i++)
+        centroidBounds = bbox_p_union(bounds, primitives_info[i].center);
+
+    dim = bbox_maximum_extent(centroidBounds);
+
+    // If it's a bunch of BBox on the same spot, there's no possible splitting
+    if(centroidBounds.max.s[dim] == centroidBounds.min.s[dim]) {
+        output = (BVHNode) {
+            .bounds = bounds,
+            .triangle_start = start,
+            .triangle_end = end,
+            .sons.x = -1,
+            .sons.y = -1
+        };
+        array_push(nodes, &output);
+        return array_size(nodes) - 1;
+    }
+
+    // Compute the different buckets
+    typedef struct BucketInfo BucketInfo;
+    struct BucketInfo {
+        int count;
+        BBox3 bounds;
+        bool init;
+    };
+    BucketInfo buckets[BUCKET_COUNT];
+    for(int i = 0; i < BUCKET_COUNT; i++) 
+        buckets[i].init = false;
+
+    for(int i = start; i < end; i++) {
+        double3 offset = bbox_p_offset(bounds, primitives_info[i].center);
+        int b = BUCKET_COUNT * offset.s[dim];
+        if(b == BUCKET_COUNT)
+            b = BUCKET_COUNT - 1;
+        
+        if(!buckets[b].init) {
+            buckets[b].bounds = primitives_info[i].bounds;
+            buckets[b].count = 0;
+            buckets[b].init = true;
+        } else
+            buckets[b].bounds = bbox_b_union(buckets[b].bounds, primitives_info[i].bounds);
+
+        buckets[b].count ++;
+    }
+
+    // Compute the cost
+    double cost[BUCKET_COUNT - 1];
+    int count0[BUCKET_COUNT - 1];
+    for(int i = 0; i < BUCKET_COUNT - 1; i ++) {
+        BBox3 b0, b1;
+        int count1;
+        bool init0, init1;
+
+        init0 = init1 = false;
+        for(int j = 0; j <= i; j++) {
+            if(!buckets[j].init)
+                continue;
+            
+            if(!init0) {
+                b0 = buckets[j].bounds;
+                count0[i] = buckets[j].count;
+                init0 = true;
+            } else {
+                b0 = bbox_b_union(b0, buckets[j].bounds);
+                count0[i] += buckets[j].count;
+            }
+        }
+        for(int j = i + 1; j < BUCKET_COUNT; j++) {
+            if(!buckets[j].init)
+                continue;
+            
+            if(!init1) {
+                b1 = buckets[j].bounds;
+                count1 = buckets[j].count;
+                init1 = true;
+            } else {
+                b1 = bbox_b_union(b1, buckets[j].bounds);
+                count1 += buckets[j].count;
+            }
+        }
+
+        if(init0 && init1)
+            cost[i] = 0.125 + (double) (count0[i] * bbox_surface_area(b0) + count1 * bbox_surface_area(b1)) / bbox_surface_area(bounds);
+        else
+            cost[i] = +INFINITY;
+    }
+
+    // Get the smallest cost
+    int minCostIndex = 0;
+    for(int i = 1; i < BUCKET_COUNT - 1; i ++)
+        if(cost[i] < cost[minCostIndex])
+            minCostIndex = i;
+
+    if(cost[minCostIndex] == +INFINITY) {
+        output = (BVHNode) {
+            .bounds = bounds,
+            .triangle_start = start,
+            .triangle_end = end,
+            .sons.x = -1,
+            .sons.y = -1
+        };
+        array_push(nodes, &output);
+        return array_size(nodes) - 1;
+    }
+
+    // Reorganize the primitive's nodes in order to be able to split them
+    int primitive_in_b1 = 0;
+
+    int mid = count0[minCostIndex] + start;
+    for(int i = start; i < mid; i ++) {
+        double3 offset = bbox_p_offset(bounds, primitives_info[i].center);
+        int b = BUCKET_COUNT * offset.s[dim];
+        if(b == BUCKET_COUNT)
+            b = BUCKET_COUNT - 1;
+
+        if(b > minCostIndex) {
+            PrimitiveInfo tmp = primitives_info[i];
+            Triangle tmp_tri = tris[i];
+
+            primitives_info[i] = primitives_info[primitive_in_b1 + mid];
+            tris[i] = tris[primitive_in_b1 + mid];
+
+            primitives_info[primitive_in_b1 + mid] = tmp;
+            tris[primitive_in_b1 + mid] = tmp_tri;
+
+            primitive_in_b1 ++;
+            i --;
+        }
+    }
+    
+    output = (BVHNode) {
+        .bounds = bounds,
+        .sons.x = buildBVHTreeSAH(obj, obj_meta, nodes, primitives_info, tris, start, mid),
+        .sons.y = buildBVHTreeSAH(obj, obj_meta, nodes, primitives_info, tris, mid, end)
+    };
+
+    array_push(nodes, &output);
+
+    int node_index = array_size(nodes) - 1;
+
+    ((BVHNode*)nodes->array)[output.sons.x].parent = node_index;
+    ((BVHNode*)nodes->array)[output.sons.y].parent = node_index;
+    
+    return node_index;
+}
+
+int buildBVHTreeFromObject(Object obj, ObjectMetadata *obj_meta)
+{
+    PrimitiveInfo node;
+    Array nodes, primitives_info;
+
+    nodes = array_create(sizeof(BVHNode));
+    primitives_info = array_create(sizeof(PrimitiveInfo));
+
+    for(uint i = 0; i < obj_meta->triangles_count; i++) {
+        double3 points[3] = {
+            obj.vertices[obj.triangles[i].vertices[0]],
+            obj.vertices[obj.triangles[i].vertices[1]],
+            obj.vertices[obj.triangles[i].vertices[2]]
+        };
+
+        node.bounds = (BBox3) {.min = points[0], .max = points[0]};
+        node.bounds = bbox_p_union(node.bounds, points[1]);
+        node.bounds = bbox_p_union(node.bounds, points[2]);
+        node.center = bbox_center(node.bounds);
+
+        array_push(&primitives_info, &node);
+    }
+
+    int root_id = buildBVHTreeSAH(obj, obj_meta, &nodes, primitives_info.array, obj.triangles, 0, obj_meta->triangles_count);
+
+    obj_meta->tree = (BVHTree) {
+        .nodes = nodes.array,
+        .nodes_count = array_size(&nodes),
+        .root = root_id
+    };
+    obj_meta->tree.nodes[root_id].parent = -1;
+
+    array_free(&primitives_info);
+
+    return 0;
+}
+
+uint BVHTree_depth(BVHNode* tree, int root)
+{
+    if(root == -1)
+        return 0;
+    
+    return 1 + fmax(BVHTree_depth(tree, tree[root].sons.x), BVHTree_depth(tree, tree[root].sons.y));
+}
+
+void printObjectInfo(ObjectMetadata metadata)
+{
+    printf("================\n");
+    printf("%ld triangles\n", metadata.triangles_count);
+    printf("%ld vertices\n", metadata.vertices_count);
+    printf("%ld normals\n", metadata.vertices_normal_count);
+    printf("%ld texture coordonates\n", metadata.vertices_tex_count);
+    printf("%ld meterials\n", metadata.materials_count);
+    printf("BVH Tree depth: %ld\n", BVHTree_depth(metadata.tree.nodes, metadata.tree.root));
+    printf("Bounds:\n");
+    printf("- min: %lf %lf %lf\n",
+        metadata.tree.nodes[metadata.tree.root].bounds.min.x,
+        metadata.tree.nodes[metadata.tree.root].bounds.min.y,
+        metadata.tree.nodes[metadata.tree.root].bounds.min.z);
+    printf("- max: %lf %lf %lf\n",
+        metadata.tree.nodes[metadata.tree.root].bounds.max.x,
+        metadata.tree.nodes[metadata.tree.root].bounds.max.y,
+        metadata.tree.nodes[metadata.tree.root].bounds.max.z);
+    printf("Groups:\n");
+    for(size_t i = 0; i < metadata.groups_count; i ++)
+        printf(" - \"%s\"\n", metadata.groups_name[i]);
+    printf("================\n");
 }

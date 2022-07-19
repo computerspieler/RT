@@ -29,15 +29,19 @@ typedef cl_uint2 uint2;
 
 double rsqrt(double x);
 
-#define DOUBLE3(_x, _y, _z) (double3){.x = (double)(_x), .y = (double)(_y), .z = (double)(_z)}
-#define INT4(_x, _y, _z, _w) (int4){.x = (int)(_x), .y = (int)(_y), .z = (int)(_z), .w = (int)(_w)}
-#define UINT3(_x, _y, _z)   (uint3){.x = (uint)(_x), .y = (uint)(_y), .z = (uint)(_z)}
+#define INT4(_x, _y, _z, _w) (int4)   {.x = (int)(_x),    .y = (int)(_y),    .z = (int)(_z),   .w = (int)(_w)}
+#define INT2(_x, _y)         (int2)   {.x = (int)(_x),    .y = (int)(_y)}
+#define UINT3(_x, _y, _z)    (uint3)  {.x = (uint)(_x),   .y = (uint)(_y),   .z = (uint)(_z)}
+#define UINT2(_x, _y)        (uint2)  {.x = (uint)(_x),   .y = (uint)(_y)}
+#define DOUBLE3(_x, _y, _z)  (double3){.x = (double)(_x), .y = (double)(_y), .z = (double)(_z)}
 
 #else
 
-#define DOUBLE3(_x, _y, _z) (double3)((_x), (_y), (_z))
-#define INT4(_x, _y, _z, _w) (int4)((_x), (_y), (_z), (_w))
-#define UINT3(_x, _y, _z)   (uint3)((_x), (_y), (_z))
+#define UINT2(_x, _y)        (uint2)  ((_x), (_y))
+#define UINT3(_x, _y, _z)    (uint3)  ((_x), (_y), (_z))
+#define INT2(_x, _y)         (int2)   ((_x), (_y))
+#define INT4(_x, _y, _z, _w) (int4)   ((_x), (_y), (_z), (_w))
+#define DOUBLE3(_x, _y, _z)  (double3)((_x), (_y), (_z))
 
 typedef unsigned long size_t;
 
