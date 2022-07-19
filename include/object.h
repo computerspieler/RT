@@ -15,6 +15,9 @@ struct Triangle
     uint uv[3];
     uint normals[3];
 
+    double3 surfaceNormal;
+    double det;
+
     uint material;
     uint group;
 };

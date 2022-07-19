@@ -62,13 +62,13 @@ int main(int argc, char *argv[])
     cl_int err;
     OpenCL_FullContext cl;
     
-    f = fopen("test.obj", "r");
+    f = fopen("stanford-bunny.obj", "r");
     if(loadFromObj(f, &obj, &obj_meta))
         return -1;
 
     Camera camera = {
         .near = 0.1f,
-        .pos = FLOAT3(1, 1, 1),
+        .pos = DOUBLE3(-4, -4, -4),
         .fov = M_PI_4,
         .viewport = (int2){.x = SCREEN_WIDTH, .y = SCREEN_HEIGHT}
     };

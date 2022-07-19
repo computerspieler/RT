@@ -1,5 +1,5 @@
-#ifndef _FLOAT3_H_
-#define _FLOAT3_H_
+#ifndef _DOUBLE3_H_
+#define _DOUBLE3_H_
 
 #include "typedef.h"
 

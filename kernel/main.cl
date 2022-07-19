@@ -39,23 +39,19 @@ bool interactionRayBBox(BBox3 b, Ray r)
 
 bool interactionRayTriangle(Triangle t, __global double3 *vertices, Ray r, SurfaceInteraction *i)
 {
-	double dotNormalDirection, time, det;
-	double3 C, P, surfaceNormal;
+	double dotNormalDirection, time;
+	double3 C, P;
 	double3 points[3] = {
 		vertices[t.vertices[0]],
 		vertices[t.vertices[1]],
 		vertices[t.vertices[2]]
 	};
-	
-	surfaceNormal = double3_cross(double3_diff(points[1], points[0]), double3_diff(points[2], points[0]));
-    surfaceNormal = double3_normalize(surfaceNormal);
-	det = -double3_dot(surfaceNormal, points[0]);
 
-	dotNormalDirection = double3_dot(surfaceNormal, r.direction);
+	dotNormalDirection = double3_dot(t.surfaceNormal, r.direction);
 	if(fabs(dotNormalDirection) < RAY_EPSILON)
 		return false;
 
-	time = -(det + double3_dot(surfaceNormal, r.origin)) / dotNormalDirection;
+	time = -(t.det + double3_dot(t.surfaceNormal, r.origin)) / dotNormalDirection;
 
 	if(time < r.min_t || time > r.max_t)
 		return false;
@@ -64,21 +60,21 @@ bool interactionRayTriangle(Triangle t, __global double3 *vertices, Ray r, Surfa
 
 	// First edge
 	C = double3_cross(points[1] - points[0], P - points[0]);
-	if(double3_dot(surfaceNormal, C) < -RAY_EPSILON)
+	if(double3_dot(t.surfaceNormal, C) < -RAY_EPSILON)
 		return false;
 
 	// Second edge
 	C = double3_cross(points[2] - points[1], P - points[1]);
-	if(double3_dot(surfaceNormal, C) < -RAY_EPSILON)
+	if(double3_dot(t.surfaceNormal, C) < -RAY_EPSILON)
 		return false;
 
 	// Third edge
 	C = double3_cross(points[0] - points[2], P - points[2]);
-	if(double3_dot(surfaceNormal, C) < -RAY_EPSILON)
+	if(double3_dot(t.surfaceNormal, C) < -RAY_EPSILON)
 		return false;
 
 	i->time = time;
-	i->n = surfaceNormal;
+	i->n = t.surfaceNormal;
 	i->p = P;
 	
 	return true;

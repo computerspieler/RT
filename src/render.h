@@ -23,8 +23,8 @@ typedef struct
 	exit(EXIT_FAILURE);						\
 }
 
-#define SCREEN_WIDTH	640
-#define SCREEN_HEIGHT	640
+#define SCREEN_WIDTH	160
+#define SCREEN_HEIGHT	160
 
 int initWindow();
 int updateWindow(OpenCL_FullContext *cl, Camera *c);

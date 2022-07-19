@@ -29,13 +29,13 @@ typedef cl_uint2 uint2;
 
 double rsqrt(double x);
 
-#define FLOAT3(_x, _y, _z) (double3){.x = (double)(_x), .y = (double)(_y), .z = (double)(_z)}
+#define DOUBLE3(_x, _y, _z) (double3){.x = (double)(_x), .y = (double)(_y), .z = (double)(_z)}
 #define INT4(_x, _y, _z, _w) (int4){.x = (int)(_x), .y = (int)(_y), .z = (int)(_z), .w = (int)(_w)}
 #define UINT3(_x, _y, _z)   (uint3){.x = (uint)(_x), .y = (uint)(_y), .z = (uint)(_z)}
 
 #else
 
-#define FLOAT3(_x, _y, _z) (double3)((_x), (_y), (_z))
+#define DOUBLE3(_x, _y, _z) (double3)((_x), (_y), (_z))
 #define INT4(_x, _y, _z, _w) (int4)((_x), (_y), (_z), (_w))
 #define UINT3(_x, _y, _z)   (uint3)((_x), (_y), (_z))
 

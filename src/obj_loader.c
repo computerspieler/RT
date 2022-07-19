@@ -198,6 +198,17 @@ int loadFromObj(FILE *f, Object *obj, ObjectMetadata *metadata)
     obj->materials = materials.array;
     obj->vertices_normal = normals.array;
 
+    for(size_t i = 0; i < metadata->triangles_count; i++) {
+        double3 points[3] = {
+            obj->vertices[obj->triangles[i].vertices[0]],
+            obj->vertices[obj->triangles[i].vertices[1]],
+            obj->vertices[obj->triangles[i].vertices[2]]
+        };
+        obj->triangles[i].surfaceNormal = double3_cross(double3_diff(points[1], points[0]), double3_diff(points[2], points[0]));
+        obj->triangles[i].surfaceNormal = double3_normalize(obj->triangles[i].surfaceNormal);
+        obj->triangles[i].det = -double3_dot(obj->triangles[i].surfaceNormal, points[0]);
+    }
+
     printf("Object file sucessfully loaded\n");
 
     return 0;
@@ -267,7 +278,9 @@ int mergeObjects(Object *obj1, ObjectMetadata *obj1_meta, Object *obj2, ObjectMe
                 obj2->triangles[i].uv[0] + obj1_meta->vertices_tex_count,
                 obj2->triangles[i].uv[1] + obj1_meta->vertices_tex_count,
                 obj2->triangles[i].uv[2] + obj1_meta->vertices_tex_count
-            }
+            },
+            .surfaceNormal = obj2->triangles[i].surfaceNormal,
+            .det = obj2->triangles[i].det
         };
 
     return 0;

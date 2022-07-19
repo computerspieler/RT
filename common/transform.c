@@ -281,22 +281,22 @@ BBox3 transform_apply_bbox3(BBox3 b, Transform t)
     };
 
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.max.x, b.min.y, b.min.z), t
+        DOUBLE3(b.max.x, b.min.y, b.min.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.min.x, b.max.y, b.min.z), t
+        DOUBLE3(b.min.x, b.max.y, b.min.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.min.x, b.min.y, b.max.z), t
+        DOUBLE3(b.min.x, b.min.y, b.max.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.max.x, b.max.y, b.min.z), t
+        DOUBLE3(b.max.x, b.max.y, b.min.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.max.x, b.min.y, b.max.z), t
+        DOUBLE3(b.max.x, b.min.y, b.max.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
-        FLOAT3(b.min.x, b.max.y, b.max.z), t
+        DOUBLE3(b.min.x, b.max.y, b.max.z), t
     ));
     o = bbox_p_union(o, transform_apply_point(
         b.max, t
