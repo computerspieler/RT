@@ -14,6 +14,7 @@ typedef struct {
 Array array_create(size_t element_size);
 void array_free(Array*);
 void array_push(Array*, void*);
+void array_set(Array*, int, void*);
 void array_pull(Array*, void*);
 size_t array_size(Array*);
 int array_isEmpty(Array*);

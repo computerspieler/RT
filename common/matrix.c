@@ -8,7 +8,6 @@
 #else
 
 #define assert(...)
-#define printf(...)
 #define putchar(...)
 
 #endif
@@ -84,7 +83,7 @@ Matrix4x4 matrix_inverse(Matrix4x4 m)
             if(m.s[col + 4 * i] == 0.0f)
                 continue;
 
-            if( max == 0.0f || (m.s[col + 4 * i] > max && max != 0.0f) ) {
+            if(row == -1 || m.s[col + 4 * i] > max) {
                 row = i;
                 max = m.s[col + 4 * i];
             }
@@ -106,8 +105,8 @@ Matrix4x4 matrix_inverse(Matrix4x4 m)
             }
         
 
-        printf("Row: %d; Col: %d\n", row, col);
-        matrix_print(m); putchar('\n'); putchar('\n');
+        //printf("Row: %d; Col: %d\n", row, col);
+        //matrix_print(m); putchar('\n'); putchar('\n');
     }
 
     return output;

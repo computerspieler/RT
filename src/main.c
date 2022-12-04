@@ -7,141 +7,268 @@
 #include <SDL/SDL.h>
 #include <string.h>
 #include <limits.h>
+#include <bits/types/struct_timeval.h>
+#include <sys/time.h>
 
 #include "bvhtree.h"
 #include "cl_handler.h"
 #include "material.h"
-#include "obj_loader.h"
-#include "object.h"
-#include "render.h"
-#include "camera.h"
+#include "scene_loader.h"
 #include "scene.h"
+#include "camera.h"
+#include "transform.h"
+#include "host.h"
 
-const char* CL_COMPILE_FLAGS = "-D IN_OPENCL -I include -I kernel -I common";
+#define SDL_FATAL(func)						\
+{											\
+	printf(#func ": %s\n", SDL_GetError());	\
+	exit(EXIT_FAILURE);						\
+}
+
+#define SCREEN_WIDTH  320
+#define SCREEN_HEIGHT 320
+
+const char* CL_COMPILE_FLAGS =
+	" -D IN_OPENCL "
+	" -I include "
+	" -I kernel "
+	" -I common "
+	" -D PRINT_DEBUG "
+	;
 
 cl_int add_folder(OpenCL_ProgramContext *cl, const char *path)
 {
-    DIR *d;
-    FILE *f;
-    struct dirent *dir;
-    char fullpath[PATH_MAX];
+	DIR *d;
+	FILE *f;
+	struct dirent *dir;
+	char fullpath[PATH_MAX];
 
-    d = opendir(path);
-    if(!d) {
-        perror("opendir");
-        return -1;
-    }
+	d = opendir(path);
+	if(!d) {
+		perror("opendir");
+		return -1;
+	}
 
-    while((dir = readdir(d)) != NULL) {
-        if(dir->d_type != DT_REG)
-            continue;
+	while((dir = readdir(d)) != NULL) {
+		if(dir->d_type != DT_REG)
+			continue;
 
-        sprintf(fullpath, "%s/%s", path, dir->d_name);
-        printf("Load %s\n", fullpath);
+		sprintf(fullpath, "%s/%s", path, dir->d_name);
+		printf("Load %s\n", fullpath);
 
-        f = fopen(fullpath, "r");
-        if(!f) {
-            perror("fopen");
-            closedir(d);
-            return -2;
-        }
+		f = fopen(fullpath, "r");
+		if(!f) {
+			perror("fopen");
+			closedir(d);
+			return -2;
+		}
 
-        opencl_add_program_source(cl, f);
-        fclose(f);
-    }
+		opencl_add_program_source(cl, f);
+		fclose(f);
+	}
 
-    closedir(d);
+	closedir(d);
 
-    return CL_SUCCESS;
+	return CL_SUCCESS;
 }
 
-int main(int argc, char *argv[])
+long long get_current_time()
 {
-    FILE *f;
-    Object obj;
-    ObjectMetadata obj_meta;
-    cl_int err;
-    OpenCL_GeneralContext cl_gen;
-    OpenCL_ProgramContext cl_prg;
-    
-    f = fopen("scene/test2.obj", "r");
-    if(loadFromObj(f, &obj, &obj_meta))
-        return -1;
+	struct timeval te;
+	gettimeofday(&te, NULL);
+	return te.tv_sec * 1000LL + te.tv_usec / 1000;
+}
 
-    printObjectInfo(obj_meta);
+const cl_double speed = 0.125f;
+int main(void)
+{
+	bool update;
+	FILE *f;
+	Scene obj;
+	cl_int err;
+	SDL_Surface* screen;
+	OpenCL_GeneralContext cl_gen;
+	OpenCL_ProgramContext cl_prg;
 
-    Camera camera = {
-        .near = 0.1f,
-        .pos = DOUBLE3(0, 0, -10),
-        .fov = M_PI_4,
-        .max_t = 1e10,
-        .viewport = (int2){.x = SCREEN_WIDTH, .y = SCREEN_HEIGHT}
-    };
-    
-    // Open the context
-    err = opencl_init_general_context(&cl_gen);
-    if(err != CL_SUCCESS)
-        goto exit;
+	HostContext ctx = (HostContext) {
+		.camera = (Camera) {
+			.near = 0.1f,
+			.pos = VEC3(0.125, -1.25, 1.75),
+			.rot = VEC3(0, M_PI, 0),
+			.fov = M_PI_4,
+			.max_t = 1e10,
+			.viewport = (int2){.x = SCREEN_WIDTH, .y = SCREEN_HEIGHT}
+		}
+	};
+	ctx.camera.rotation_transform = transform_combine(
+		transform_combine(
+			transform_rotate_x(ctx.camera.rot.x),
+			transform_rotate_y(ctx.camera.rot.y)
+		), transform_rotate_z(ctx.camera.rot.z)
+	);
 
-    // Load the kernel
-    err = opencl_init_program_context(&cl_prg);
-    if(err != CL_SUCCESS)
-        goto exit;
+	if(SDL_Init(SDL_INIT_VIDEO) < 0)
+		SDL_FATAL(SDL_Init);
 
-    for(int i = 1; i < argc; i++) {
-        err = add_folder(&cl_prg, argv[i]);
-        // If this isn't a folder
-        if(err == -1) {
-            f = fopen(argv[i], "r");
-            if(!f) {
-                perror("fopen");
-                goto exit;
-            }
+	screen = SDL_SetVideoMode(
+			SCREEN_WIDTH,
+			SCREEN_HEIGHT,
+			32, SDL_HWSURFACE
+		);
 
-            opencl_add_program_source(&cl_prg, f);
-            fclose(f);
-        } else if(err != 0)
-            goto exit;
-    }
+	if(!screen)
+		SDL_FATAL(SDL_SetVideoMode);
 
-    char buffer[1024];
-    sprintf(buffer, "%s -DMAX_TREE_DEPTH=%d", CL_COMPILE_FLAGS, BVHTree_depth(obj_meta.tree.nodes, obj_meta.tree.root));
+	SDL_WM_SetCaption("RayTracing", NULL);
+	
+	// Open the context
+	err = opencl_init_general_context(&cl_gen);
+	if(err != CL_SUCCESS)
+		goto exit;
 
-    TRY(opencl_build_program, exit,
-        &cl_gen, &cl_prg, "compute_ray", buffer);
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, &camera, sizeof(Camera));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj.materials, obj_meta.materials_count * sizeof(Material));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj.vertices, obj_meta.vertices_count * sizeof(double3));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj.vertices_normal, obj_meta.vertices_normal_count * sizeof(double3));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj.vertices_tex, obj_meta.vertices_tex_count * sizeof(double2));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj.triangles, obj_meta.triangles_count * sizeof(Triangle));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, &obj_meta, sizeof(ObjectMetadata));
-    
-    TRY(opencl_add_input_buffer, exit,
-        &cl_gen, &cl_prg, obj_meta.tree.nodes, obj_meta.tree.nodes_count * sizeof(BVHNode));
+	// Load the kernel
+	err = opencl_init_program_context(&cl_prg);
+	if(err != CL_SUCCESS)
+		goto exit;
 
-    if(initWindow())
-        goto exit;
+	err = add_folder(&cl_prg, "common");
+	if(err != CL_SUCCESS)
+		goto exit;
 
-    updateWindow(&cl_gen, &cl_prg, &camera);
+	err = add_folder(&cl_prg, "kernel");
+	if(err != CL_SUCCESS)
+		goto exit;
+
+	// Load the scene
+	f = fopen("scene/test2.obj", "r");
+	if(loadFromObj(f, &obj, &ctx.scene_meta, false, false))
+		goto exit;
+	fclose(f);
+
+	printObjectInfo(ctx.scene_meta);
+
+	char buffer[1024];
+
+	printf("Compile the program\n");
+	sprintf(
+		buffer, "%s -DMAX_TREE_DEPTH=%u",
+		CL_COMPILE_FLAGS,
+		BVHTree_depth(ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.root)
+	);
+
+	TRY(opencl_build_program, exit,
+		&cl_gen, &cl_prg, "compute_pixel", buffer);
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.materials, ctx.scene_meta.materials_count * sizeof(Material));
+	
+	printf("Load the buffers\n");
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.vertices, ctx.scene_meta.vertices_count * sizeof(vec3));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.vertices_normal, ctx.scene_meta.vertices_normal_count * sizeof(vec3));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.vertices_tex, ctx.scene_meta.vertices_tex_count * sizeof(double2));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.triangles, ctx.scene_meta.triangles_count * sizeof(Triangle));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.nodes_count * sizeof(BVHNode));
+
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
+
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, &ctx, sizeof(HostContext));
+
+	SDL_Event ev;
+	int running = 1;
+
+	size_t origin[3] = {0};
+	size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT, 1};
+	void *b = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
+
+	TRY(opencl_add_input_output_buffer, exit,
+		&cl_gen, &cl_prg, b, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(double) * 4);
+
+	TRY(opencl_add_output_image, exit,
+		&cl_gen, &cl_prg, (cl_uchar4**) &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
+	);
+	
+
+	printf("Run the program\n");
+	ctx.sampleCount = 0;
+	bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
+	opencl_prerun(&cl_prg);
+
+	long long first_start = get_current_time();
+	while(running)
+	{
+		while(!SDL_PollEvent(&ev) || ev.type == SDL_NOEVENT) {
+			SDL_LockSurface(screen);
+			for(int i = 0; i < 1; i ++) {
+				long long start = get_current_time();
+				ctx.seed = (unsigned int) get_current_time() * get_current_time();
+				ctx.sampleCount++;
+				opencl_run(&cl_gen, &cl_prg, origin, region);
+				opencl_postrun(&cl_gen, &cl_prg, origin, region);
+				printf("Milliseconds spent: %lld, sampling count: %d, time since the beginning: %lld\n", get_current_time() - start, ctx.sampleCount, (get_current_time() - first_start) / 1000);
+			}
+			SDL_UnlockSurface(screen);
+			
+			SDL_Flip(screen);
+		}
+		
+		switch(ev.type)
+		{
+			case SDL_QUIT:
+				running = 0;
+				break;
+
+			
+			case SDL_KEYDOWN:
+				update = true;
+				switch(ev.key.keysym.sym) {
+				case SDLK_z:			ctx.camera.pos.z += speed; break;
+				case SDLK_s:			ctx.camera.pos.z -= speed; break;
+				case SDLK_q:			ctx.camera.pos.x -= speed; break;
+				case SDLK_d:			ctx.camera.pos.x += speed; break;
+				case SDLK_UP:			ctx.camera.rot.x += speed; break;
+				case SDLK_DOWN:			ctx.camera.rot.x -= speed; break;
+				case SDLK_LEFT:			ctx.camera.rot.y -= speed; break;
+				case SDLK_RIGHT:		ctx.camera.rot.y += speed; break;
+				case SDLK_SPACE:		ctx.camera.pos.y -= speed; break;
+				case SDLK_BACKSPACE:	ctx.camera.pos.y += speed; break;
+
+				default:
+					update = false;
+				}
+
+				if(!update)
+					break;
+
+				ctx.camera.rotation_transform = transform_combine(
+					transform_combine(
+						transform_rotate_x(ctx.camera.rot.x),
+						transform_rotate_y(ctx.camera.rot.y)
+					), transform_rotate_z(ctx.camera.rot.z)
+				);
+				
+				bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
+				ctx.sampleCount = 0;
+				break;
+			
+			default:
+				break;
+		}
+	}
 
 exit:
-    printf("Error code : %i\n", err);
-    printf("Exit !\n");
+	printf("Error code : %i\n", err);
+	printf("Exit !\n");
 
-    return 0;
+	return 0;
 }

@@ -3,20 +3,20 @@
 
 #include "typedef.h"
 
-#include "matrix.h"
+#include "transform.h"
 
 typedef struct Camera Camera;
 struct Camera
 {
-    double3 pos;
-    double3 rot;
+    vec3 pos;
+    vec3 rot;
 
     double near;
     double max_t;
     double fov;
     int2 viewport;
 
-    Matrix4x4 rotation_matrix;
+    Transform rotation_transform;
 };
 
 #endif

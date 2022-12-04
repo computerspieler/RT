@@ -11,7 +11,6 @@ struct BVHNode
     int2 sons;
     uint triangle_start;
     uint triangle_end;
-    int parent;
 };
 
 typedef struct BVHTree BVHTree;
