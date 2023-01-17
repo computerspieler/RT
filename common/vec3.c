@@ -43,11 +43,6 @@ double vec3_dot(vec3 v1, vec3 v2)
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
 }
 
-double vec3_adot(vec3 v1, vec3 v2)
-{
-	return fabs(vec3_dot(v1, v2));
-}
-
 vec3 vec3_cross(vec3 v1, vec3 v2)
 {
 	vec3 o;
@@ -98,15 +93,16 @@ double vec3_norm(vec3 v)
 
 vec3 vec3_normalize(vec3 v)
 {
-	double norm = vec3_norm(v);
+	double invNorm;
+	double norm2 = vec3_norm_2(v);
 
-	if(norm == 0) {
-		v.x = 1;
-		v.y = v.z = 0;
-	} else {
-		v.x /= norm;
-		v.y /= norm;
-		v.z /= norm;
+	if(norm2 == 0)
+		v.x = v.y = v.z = 0;
+	else {
+		invNorm = 1. / sqrt(norm2);
+		v.x *= invNorm;
+		v.y *= invNorm;
+		v.z *= invNorm;
 	}
 
 	return v;

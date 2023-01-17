@@ -8,7 +8,6 @@ vec3 vec3_diff(vec3 v1, vec3 v2);
 vec3 vec3_mul(vec3 v1, vec3 v2);
 vec3 vec3_div(vec3 v1, vec3 v2);
 double vec3_dot(vec3 v1, vec3 v2);
-double vec3_adot(vec3 v1, vec3 v2);
 vec3 vec3_cross(vec3 v1, vec3 v2);
 vec3 vec3_smul(double a, vec3 v);
 vec3 vec3_sadd(double a, vec3 v);

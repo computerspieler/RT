@@ -39,7 +39,7 @@ cl_int opencl_init_general_context(OpenCL_GeneralContext *cl_gen)
 
     err = clGetPlatformIDs(1, &cl_gen->platform, NULL);
     CHECK_ERR(clGetPlatformIDs, end);
-    err = clGetDeviceIDs(cl_gen->platform, CL_DEVICE_TYPE_GPU, 1, &cl_gen->device, NULL);
+    err = clGetDeviceIDs(cl_gen->platform, CL_DEVICE_TYPE_ALL, 1, &cl_gen->device, NULL);
     CHECK_ERR(clGetDeviceIDs, end);
     cl_gen->context = clCreateContext(NULL, 1, &cl_gen->device, NULL, NULL, &err);
     CHECK_ERR(clCreateContext, end);
@@ -157,7 +157,7 @@ int opencl_add_input_output_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_Program
     buffer = (CLBuffer) {
         .cl = clCreateBuffer(
             cl_gen->context,
-            CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+            CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR,
             len, buf,
             &err
         ),
@@ -261,6 +261,7 @@ void opencl_run(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, si
 
     TRY(clEnqueueNDRangeKernel, exit,
         cl_gen->queue, cl_prg->kern, 2, origin, region, local, 0, NULL, NULL);
+	clFinish(cl_gen->queue);
 
 exit:
     return;
@@ -308,6 +309,8 @@ void opencl_postrun(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg
                 );
             }
         }
+
+		clFinish(cl_gen->queue);
     }
 
 exit:

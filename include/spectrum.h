@@ -42,6 +42,9 @@ typedef double Spectrum[SPECTRUM_SIZE];
     for(int i = 0; i < SPECTRUM_SIZE; i ++) \
         sout[i] = s1[i] * c;
 
+#define spectrum_val(s, lambda) \
+    s[(lambda - SPECTRUM_START) / SPECTRUM_STEP]
+
 double spectrum_sum(Spectrum *s);
 double spectrum_avg(Spectrum *s);
 

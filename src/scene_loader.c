@@ -15,6 +15,7 @@
 #include "scene.h"
 #include "spectrum.h"
 #include "tree.h"
+#include "map.h"
 
 int readSpectrum(FILE *f, Spectrum *out)
 {
@@ -52,7 +53,7 @@ int readSpectrum(FILE *f, Spectrum *out)
     return 1;
 }
 
-int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials)
+int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials, Array *maps)
 {
     Material mat;
     bool initialized = false;
@@ -83,6 +84,51 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
             if(!initialized)
                 initialized = true;
         }
+		else if(strcmp(buffer, "Le") == 0)
+			fscanf(f, "%lf\n", &mat.Le);
+		else if(strcmp(buffer, "norm") == 0) {
+			fscanf(f, "%s\n", buffer);
+			FILE *fn = fopen(buffer, "r");
+			if(!fn) {
+				perror("fopen (loadFromMtl)");
+				return 0;
+			}
+
+			// Note: Inadapté dans un cas général
+			// Mais c'est suffisant pour un TIPE
+			int width, height, rgb_comp;
+			
+			if(fscanf(fn, "P6\n%d %d\n%d", &width, &height, &rgb_comp) != 3) {
+				printf("Invalid header\n");
+				fclose(fn);
+				return 0;
+			}
+
+			if(rgb_comp != 255) {
+				printf("Requires an 8 bit component\n");
+				fclose(fn);
+				return 0;
+			}
+
+			while (fgetc(fn) != '\n');
+
+			unsigned char c;
+
+			mat.normal_map = (Map) {
+				.width = width,
+				.height = height,
+				.start = array_size(maps)
+			};
+
+			for(int i = 0; i < height; i ++)
+				for(int j = 0; j < width; j ++) {
+					c = fgetc(fn); array_push(maps, &c);
+					c = fgetc(fn); array_push(maps, &c);
+					c = fgetc(fn); array_push(maps, &c);
+				}
+
+			fclose(fn);
+		}
         else {
             switch(mat.type) {
                 case MATERIAL_NONE: break;
@@ -126,12 +172,6 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
                     else if(strcmp(buffer, "T") == 0) {
                         fscanf(f, "%lf\n", &mat.c.transmission);
                     }
-                    /*
-                    else if(strcmp(buffer, "Tc") == 0) {
-                        if(!readSpectrum(f, &mat.c.transmission_color))
-                            goto err;
-                    }
-                    */
                     else if(strcmp(buffer, "Td") == 0) {
                         fscanf(f, "%lf\n", &mat.c.transmission_dispersion);
                     }
@@ -144,32 +184,27 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
         array_push(materials, &mat);
 
     return 0;
-
-err:
-    return 1;
 }
 
-int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool use_normal)
+int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 {
     FILE *fm;
     vec3 vertex;
     double2 vertex_uv;
     Triangle triangle;
-    Light light;
 
     int res;
     char buffer[1024];
     char *name;
     uint current_material = -1;
     uint str_length = 0;
-    Array vertices, tex, triangles, groups, normals, material_name, materials, lights;
+    Array vertices, tex, triangles, groups, material_name, materials, maps;
     Node *materials_tree, *n;
 
     assert(obj);
     assert(metadata);
 
     vertices = array_create(sizeof(vec3));
-    normals = array_create(sizeof(vec3));
     tex = array_create(sizeof(double2));
     groups = array_create(sizeof(char*));
     triangles = array_create(sizeof(Triangle));
@@ -178,7 +213,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
     bzero(materials_tree, sizeof(Node));
     material_name = array_create(sizeof(char*));
     material_name = array_create(sizeof(char*));
-    lights = array_create(sizeof(Light));
+    maps = array_create(sizeof(unsigned char));
 
     if(!f) {
         perror("File");
@@ -193,17 +228,14 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
         if(strcmp(buffer, "v") == 0) {
             fscanf(f, "%lf %lf %lf\n", &vertex.x, &vertex.y, &vertex.z);
             array_push(&vertices, &vertex);
-        } else if(strcmp(buffer, "vn") == 0) {
-            fscanf(f, "%lf %lf %lf\n", &vertex.x, &vertex.y, &vertex.z);
-            array_push(&normals, &vertex);
         } else if(strcmp(buffer, "vt") == 0) {
             fscanf(f, "%lf %lf\n", &vertex_uv.x, &vertex_uv.y);
             array_push(&tex, &vertex_uv);
         } else if(strcmp(buffer, "f") == 0) {
-            res = fscanf(f, "%d/%d/%d %d/%d/%d %d/%d/%d\n",
-                &triangle.vertices[0], &triangle.uv[0], &triangle.normals[0],
-                &triangle.vertices[1], &triangle.uv[1], &triangle.normals[1],
-                &triangle.vertices[2], &triangle.uv[2], &triangle.normals[2]);
+            res = fscanf(f, "%d/%d %d/%d %d/%d\n",
+                &triangle.vertices[0], &triangle.uv[0],
+                &triangle.vertices[1], &triangle.uv[1],
+                &triangle.vertices[2], &triangle.uv[2]);
 
             triangle.material = current_material;
             triangle.group = array_size(&groups) - 1;
@@ -212,15 +244,11 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
             triangle.vertices[1] --;
             triangle.vertices[2] --;
             
-            triangle.normals[0] --;
-            triangle.normals[1] --;
-            triangle.normals[2] --;
-            
             triangle.uv[0] --;
             triangle.uv[1] --;
             triangle.uv[2] --;
 
-            if(res != 9) {
+            if(res != 6) {
                 printf("Invalid face (%d)\n", res);
                 goto err;
             }
@@ -251,17 +279,11 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
                 goto err;
             }
 
-            res = loadFromMtl(fm, materials_tree, &material_name, &materials);
+            res = loadFromMtl(fm, materials_tree, &material_name, &materials, &maps);
             fclose(fm);
 
             if(res)
                 goto err;
-        } else if(strcmp(buffer, "lp") == 0) {
-            fscanf(f, "%lf %lf %lf %lf", &light.pos.x, &light.pos.y, &light.pos.z, &light.I);
-            if(!readSpectrum(f, &light.light))
-                goto err;
-            light.type = LIGHT_POINT;
-            array_push(&lights, &light);
         } else
             while (fgetc(f) != '\n');
     }
@@ -272,13 +294,11 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
         .groups_count = array_size(&groups),
         .groups_name = groups.array,
         .materials_count = array_size(&materials),
-        .lights_count = array_size(&lights),
         .triangles_count = array_size(&triangles),
         .vertices_tex_count = array_size(&tex),
         .vertices_count = array_size(&vertices),
-        .vertices_normal_count = array_size(&normals),
-        .use_normal = use_normal,
-        .use_uv = use_uv
+        .use_uv = use_uv,
+		.map_size = array_size(&maps)
     };
 
     *obj = (Scene) {
@@ -286,8 +306,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
         .vertices = vertices.array,
         .vertices_tex = tex.array,
         .materials = materials.array,
-        .vertices_normal = normals.array,
-        .lights = lights.array
+		.map = maps.array
     };
 
     buildBVHTreeFromObject(*obj, metadata);
@@ -327,6 +346,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv, bool 
                 vec3_diff(vec3_smul(duv02.x, dp12), vec3_smul(duv12.x, dp02))
             );
         }
+
 /*
         printf("=== Triangle id: %zu ===\n", i);
         printf("Points %d %d %d\n",
@@ -417,11 +437,6 @@ int mergeObjects(Scene *obj1, SceneMetadata *obj1_meta, Scene *obj2, SceneMetada
         output->triangles[i + obj1_meta->triangles_count] = (Triangle) {
             .group = obj2->triangles[i].group + obj1_meta->groups_count,
             .material = obj2->triangles[i].material + obj1_meta->materials_count,
-            .normals = {
-                obj2->triangles[i].normals[0] + obj1_meta->vertices_normal_count,
-                obj2->triangles[i].normals[1] + obj1_meta->vertices_normal_count,
-                obj2->triangles[i].normals[2] + obj1_meta->vertices_normal_count
-            },
             .vertices = {
                 obj2->triangles[i].vertices[0] + obj1_meta->vertices_count,
                 obj2->triangles[i].vertices[1] + obj1_meta->vertices_count,
@@ -695,10 +710,8 @@ void printObjectInfo(SceneMetadata metadata)
     printf("================\n");
     printf("%ld triangles\n", metadata.triangles_count);
     printf("%ld vertices\n", metadata.vertices_count);
-    printf("%ld normals\n", metadata.vertices_normal_count);
     printf("%ld texture coordonates\n", metadata.vertices_tex_count);
     printf("%ld meterials\n", metadata.materials_count);
-    printf("%ld lights\n", metadata.lights_count);
     printf("BVH Tree depth: %u\n", BVHTree_depth(metadata.tree.nodes, metadata.tree.root));
     //printBVHTree(metadata.tree.nodes, metadata.tree.root, 0);
     printf("Groups:\n");

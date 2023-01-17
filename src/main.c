@@ -8,7 +8,9 @@
 #include <string.h>
 #include <limits.h>
 #include <bits/types/struct_timeval.h>
+#include <time.h>
 #include <sys/time.h>
+
 
 #include "bvhtree.h"
 #include "cl_handler.h"
@@ -27,6 +29,9 @@
 
 #define SCREEN_WIDTH  320
 #define SCREEN_HEIGHT 320
+
+#define SURFACE_WIDTH  100
+#define SURFACE_HEIGHT 100
 
 const char* CL_COMPILE_FLAGS =
 	" -D IN_OPENCL "
@@ -89,16 +94,23 @@ int main(void)
 	SDL_Surface* screen;
 	OpenCL_GeneralContext cl_gen;
 	OpenCL_ProgramContext cl_prg;
+	SDL_Event ev;
+	int running = 1;
+	size_t origin[3] = {0};
+	size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT, 1};
+	void *b;
 
 	HostContext ctx = (HostContext) {
 		.camera = (Camera) {
 			.near = 0.1f,
-			.pos = VEC3(0.125, -1.25, 1.75),
-			.rot = VEC3(0, M_PI, 0),
+			.pos = VEC3(0, 0, 0),
+			.rot = VEC3(0, 0, 0),
 			.fov = M_PI_4,
-			.max_t = 1e10,
+			.max_t = 1e2,
 			.viewport = (int2){.x = SCREEN_WIDTH, .y = SCREEN_HEIGHT}
-		}
+		},
+		.simpleView = true,
+		.selected_triangle = -1
 	};
 	ctx.camera.rotation_transform = transform_combine(
 		transform_combine(
@@ -107,14 +119,19 @@ int main(void)
 		), transform_rotate_z(ctx.camera.rot.z)
 	);
 
+	srand(time(NULL));
+
 	if(SDL_Init(SDL_INIT_VIDEO) < 0)
 		SDL_FATAL(SDL_Init);
 
+	if (SDL_EnableKeyRepeat(100, SDL_DEFAULT_REPEAT_INTERVAL))
+		SDL_FATAL(SDL_EnableKeyRepeat);
+
 	screen = SDL_SetVideoMode(
-			SCREEN_WIDTH,
-			SCREEN_HEIGHT,
-			32, SDL_HWSURFACE
-		);
+		SCREEN_WIDTH,
+		SCREEN_HEIGHT,
+		32, SDL_HWSURFACE
+	);
 
 	if(!screen)
 		SDL_FATAL(SDL_SetVideoMode);
@@ -140,8 +157,8 @@ int main(void)
 		goto exit;
 
 	// Load the scene
-	f = fopen("scene/test2.obj", "r");
-	if(loadFromObj(f, &obj, &ctx.scene_meta, false, false))
+	f = fopen("scene/Room.obj", "r");
+	if(loadFromObj(f, &obj, &ctx.scene_meta, false))
 		goto exit;
 	fclose(f);
 
@@ -167,9 +184,6 @@ int main(void)
 		&cl_gen, &cl_prg, obj.vertices, ctx.scene_meta.vertices_count * sizeof(vec3));
 	
 	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.vertices_normal, ctx.scene_meta.vertices_normal_count * sizeof(vec3));
-	
-	TRY(opencl_add_input_buffer, exit,
 		&cl_gen, &cl_prg, obj.vertices_tex, ctx.scene_meta.vertices_tex_count * sizeof(double2));
 	
 	TRY(opencl_add_input_buffer, exit,
@@ -178,32 +192,34 @@ int main(void)
 	TRY(opencl_add_input_buffer, exit,
 		&cl_gen, &cl_prg, ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.nodes_count * sizeof(BVHNode));
 
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
-
-	TRY(opencl_add_input_buffer, exit,
+	TRY(opencl_add_input_output_buffer, exit,
 		&cl_gen, &cl_prg, &ctx, sizeof(HostContext));
 
-	SDL_Event ev;
-	int running = 1;
-
-	size_t origin[3] = {0};
-	size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT, 1};
-	void *b = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
-
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.map, ctx.scene_meta.map_size * sizeof(unsigned char));
+	
+	b = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+	bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+	
 	TRY(opencl_add_input_output_buffer, exit,
-		&cl_gen, &cl_prg, b, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(double) * 4);
+		&cl_gen, &cl_prg, b, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(double));
 
 	TRY(opencl_add_output_image, exit,
 		&cl_gen, &cl_prg, (cl_uchar4**) &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
 	);
-	
+
+	// 
+	void *irradiance = malloc(SURFACE_WIDTH * SURFACE_HEIGHT * sizeof(double));
+
+	TRY(opencl_add_input_output_buffer, exit,
+		&cl_gen, &cl_prg, irradiance, SURFACE_WIDTH * SURFACE_HEIGHT * sizeof(double));
 
 	printf("Run the program\n");
 	ctx.sampleCount = 0;
-	bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
 	opencl_prerun(&cl_prg);
+    ctx.lambda = 400;
 
+    printf("Wavelength: %d\n", ctx.lambda);
 	long long first_start = get_current_time();
 	while(running)
 	{
@@ -215,7 +231,9 @@ int main(void)
 				ctx.sampleCount++;
 				opencl_run(&cl_gen, &cl_prg, origin, region);
 				opencl_postrun(&cl_gen, &cl_prg, origin, region);
-				printf("Milliseconds spent: %lld, sampling count: %d, time since the beginning: %lld\n", get_current_time() - start, ctx.sampleCount, (get_current_time() - first_start) / 1000);
+				printf("Milliseconds spent: %lld, sampling count: %d, time since the beginning: %lld, Wavelength: %d\n",
+					get_current_time() - start, ctx.sampleCount, (get_current_time() - first_start) / 1000,
+					ctx.lambda);
 			}
 			SDL_UnlockSurface(screen);
 			
@@ -228,20 +246,26 @@ int main(void)
 				running = 0;
 				break;
 
-			
 			case SDL_KEYDOWN:
 				update = true;
 				switch(ev.key.keysym.sym) {
-				case SDLK_z:			ctx.camera.pos.z += speed; break;
-				case SDLK_s:			ctx.camera.pos.z -= speed; break;
 				case SDLK_q:			ctx.camera.pos.x -= speed; break;
 				case SDLK_d:			ctx.camera.pos.x += speed; break;
+				case SDLK_SPACE:		ctx.camera.pos.y -= speed; break;
+				case SDLK_BACKSPACE:	ctx.camera.pos.y += speed; break;
+				case SDLK_z:			ctx.camera.pos.z += speed; break;
+				case SDLK_s:			ctx.camera.pos.z -= speed; break;
+
 				case SDLK_UP:			ctx.camera.rot.x += speed; break;
 				case SDLK_DOWN:			ctx.camera.rot.x -= speed; break;
 				case SDLK_LEFT:			ctx.camera.rot.y -= speed; break;
 				case SDLK_RIGHT:		ctx.camera.rot.y += speed; break;
-				case SDLK_SPACE:		ctx.camera.pos.y -= speed; break;
-				case SDLK_BACKSPACE:	ctx.camera.pos.y += speed; break;
+				case SDLK_PAGEUP:		ctx.camera.rot.z -= speed; break;
+				case SDLK_PAGEDOWN:		ctx.camera.rot.z += speed; break;
+				
+				case SDLK_p:			ctx.lambda ++;			   break;
+				case SDLK_m:			ctx.lambda --;			   break;
+				case SDLK_TAB:			ctx.simpleView ^= 1;	   break;
 
 				default:
 					update = false;
@@ -261,6 +285,11 @@ int main(void)
 				ctx.sampleCount = 0;
 				break;
 			
+			case SDL_MOUSEMOTION:
+				ctx.mouse_pos.x = ev.motion.x;
+				ctx.mouse_pos.y = ev.motion.y;
+				break;
+
 			default:
 				break;
 		}

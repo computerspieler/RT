@@ -5,7 +5,6 @@
 #include "vec3.h"
 #include "bbox.h"
 #include "material.h"
-#include "light.h"
 #include "typedef.h"
 
 typedef struct Triangle Triangle;
@@ -13,7 +12,6 @@ struct Triangle
 {
     uint vertices[3];
     uint uv[3];
-    uint normals[3];
 
     vec3 normal;
     vec3 dpdu;
@@ -29,19 +27,17 @@ struct SceneMetadata
     char **groups_name;
  
     size_t vertices_count;
-    size_t vertices_normal_count;
     size_t vertices_tex_count;
 
     size_t triangles_count;
     size_t groups_count;
     
     size_t materials_count;
-    size_t lights_count;
+    size_t map_size;
 
     BVHTree tree;
     
     bool use_uv;
-    bool use_normal;
 };
 
 enum BxDF_Type
@@ -56,13 +52,12 @@ typedef struct Scene Scene;
 struct Scene
 {
     vec3 *vertices;
-    vec3 *vertices_normal;
     double2 *vertices_tex;
     
     Triangle *triangles;
 
     Material *materials;
-    Light *lights;
+	unsigned char* map;
 };
 
 #endif

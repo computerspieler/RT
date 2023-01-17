@@ -13,18 +13,18 @@ Transform transform_inverse(Transform t)
 
 Transform transform_transpose(Transform t)
 {
-    return (Transform) {
-        .mat = matrix_transpose(t.matInv),
-        .matInv = matrix_transpose(t.mat)
-    };
+	Transform out;
+	matrix_transpose(&out.mat, t.mat);
+	matrix_transpose(&out.matInv, t.matInv);
+    return out;
 }
 
 Transform transform_combine(Transform t1, Transform t2)
 {
-    return (Transform) {
-        .mat = matrix_mult(t1.mat, t2.mat),
-        .matInv = matrix_mult(t1.matInv, t2.matInv)
-    };
+	Transform out;
+	matrix_mult(&out.mat, t1.mat, t2.mat);
+	matrix_mult(&out.matInv, t1.matInv, t2.matInv);
+    return out;
 }
 
 Transform transform_translate(vec3 delta)
@@ -75,6 +75,7 @@ Transform transform_rotate_x(double angle)
 {
     double c = cos(angle);
     double s = sin(angle);
+	Transform out;
 
     Matrix4x4 m = {
         .s = {
@@ -85,16 +86,16 @@ Transform transform_rotate_x(double angle)
         }
     };
 
-    return (Transform) {
-        .mat = m,
-        .matInv = matrix_transpose(m)
-    };
+	out.mat = m;
+	matrix_transpose(&out.matInv, m);
+    return out;
 }
 
 Transform transform_rotate_y(double angle)
 {
     double c = cos(angle);
     double s = sin(angle);
+	Transform out;
 
     Matrix4x4 m = {
         .s = {
@@ -105,16 +106,16 @@ Transform transform_rotate_y(double angle)
         }
     };
 
-    return (Transform) {
-        .mat = m,
-        .matInv = matrix_transpose(m)
-    };
+	out.mat = m;
+	matrix_transpose(&out.matInv, m);
+    return out;
 }
 
 Transform transform_rotate_z(double angle)
 {
     double c = cos(angle);
     double s = sin(angle);
+	Transform out;
 
     Matrix4x4 m = {
         .s = {
@@ -125,10 +126,9 @@ Transform transform_rotate_z(double angle)
         }
     };
 
-    return (Transform) {
-        .mat = m,
-        .matInv = matrix_transpose(m)
-    };
+	out.mat = m;
+	matrix_transpose(&out.matInv, m);
+    return out;
 }
 
 Transform transform_rotate_axis(double angle, vec3 axis)
@@ -136,6 +136,7 @@ Transform transform_rotate_axis(double angle, vec3 axis)
     vec3 a = vec3_normalize(axis);
     double c = cos(angle);
     double s = sin(angle);
+	Transform out;
 
     Matrix4x4 m = {0};
 
@@ -154,15 +155,15 @@ Transform transform_rotate_axis(double angle, vec3 axis)
     m.v4[1][2] = a.z * a.y * (1 - c) + a.x * s;
     m.v4[2][2] = a.z * a.z + (1 - a.z * a.z) * c;
 
-    return (Transform) {
-        .mat = m,
-        .matInv = matrix_transpose(m)
-    };
+	out.mat = m;
+	matrix_transpose(&out.matInv, m);
+    return out;
 }
 
 Transform transform_look_at(vec3 pos, vec3 look, vec3 up)
 {
     Matrix4x4 cameraToWorld;
+	Transform out;
 
     cameraToWorld.v4[0][3] = pos.x;
     cameraToWorld.v4[1][3] = pos.y;
@@ -188,10 +189,9 @@ Transform transform_look_at(vec3 pos, vec3 look, vec3 up)
     cameraToWorld.v4[2][2] = dir.z;
     cameraToWorld.v4[3][2] = 0;
 
-    return (Transform) {
-        .mat = cameraToWorld,
-        .matInv = matrix_inverse(cameraToWorld)
-    };
+	out.mat = cameraToWorld;
+	matrix_inverse(&out.matInv, cameraToWorld);
+    return out;
 }
 
 vec3 transform_apply_vector(vec3 p, Transform t)
@@ -238,10 +238,10 @@ vec3 transform_apply_point(vec3 p, Transform t)
         t.mat.v4[2][3];
     
     double w =
-        t.mat.v4[2][0] * p.x +
-        t.mat.v4[2][1] * p.y +
-        t.mat.v4[2][2] * p.z +
-        t.mat.v4[2][3];
+        t.mat.v4[3][0] * p.x +
+        t.mat.v4[3][1] * p.y +
+        t.mat.v4[3][2] * p.z +
+        t.mat.v4[3][3];
 
     return vec3_smul(1/w, output);
 }
