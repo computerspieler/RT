@@ -50,8 +50,6 @@ double rsqrt(double x);
 #define DOUBLE3(_x, _y, _z)     (double3)((_x), (_y), (_z))
 #define FLOAT4(_x, _y, _z, _w)  (float4) ((_x), (_y), (_z), (_w))
 
-typedef unsigned long size_t;
-
 #endif
 
 #define VEC3(_x, _y, _z)        DOUBLE3(_x, _y, _z)

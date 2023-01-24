@@ -50,7 +50,6 @@ typedef struct Material Material;
 struct Material
 {
     MaterialType type;
-	double Le;
     
 	Map normal_map;
 

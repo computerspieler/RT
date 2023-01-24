@@ -1,4 +1,5 @@
-#define MAX_DEPTH	1
+#define MAX_DEPTH_BEFORE_ROULETTE	0
+#define MAX_DEPTH					20
 
 #include "bvhtree.h"
 #include "vec3.h"
@@ -33,10 +34,18 @@ struct Context
 	__constant Triangle *tris;
 	__constant BVHNode *bvh_nodes;
 	__constant unsigned char *maps;
+	__constant Light *lights;
 
 	__global HostContext *host_ctx;
-	unsigned int state;
+	uint state;
 	int2 on_screen_pos;
+};
+
+typedef struct PathElement PathElement;
+struct PathElement
+{
+	vec3 p;
+	double weight;
 };
 
 double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda);
@@ -56,6 +65,29 @@ double randDouble(Context *ctx)
 	return fabs((double) (randInt(ctx)) / (double) (0xFFFFFFFF));
 }
 
+vec3 UniformSphereSampling(Context *ctx)
+{
+	const double u1 = 2 * M_PI * randDouble(ctx);
+	const double u2 = 2 * M_PI * randDouble(ctx);
+
+	const double r = cos(u1);
+	vec3 output;
+
+	output.x = cos(u2) * r;
+	output.y = sin(u2) * r;
+	output.z = sin(u1);
+
+    return output;
+}
+
+Ray getRayFromLightSource(Context *ctx, int light_id) {
+	return (Ray) {
+		.origin = ctx->lights[light_id].pos,
+		.direction = UniformSphereSampling(ctx),
+		.min_t = 1e-4,
+		.max_t = 1e10
+	};
+}
 
 // https://www.rorydriscoll.com/2009/01/07/better-sampling/
 vec3 CosineSampleHemisphere(Context *ctx)
@@ -231,65 +263,65 @@ bool interactionRayBBox(Context *ctx, BBox3 b, Ray r)
 	return tmax >= tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin < r.max_t;
 }
 
+bool interactionRaySphere(Ray r, vec3 center, double radius)
+{
+	vec3 L = center - r.origin;
+	double a = vec3_norm_2(r.direction);
+	double b = 2. * vec3_dot(r.direction, L);
+	double c = vec3_norm_2(L) - radius*radius;
+
+	double discr = b*b - 4*a*c;
+	if(discr < 0) return false;
+
+	discr = sqrt(discr);
+	double t0 = (b - discr) / (2. * a);
+	double t1 = (b + discr) / (2. * a);
+
+	if(t0 > t1) {
+		double tmp = t0;
+		t0 = t1;
+		t1 = tmp;
+	}
+
+	return t0 > r.min_t && t0 < r.max_t;
+}
+
 bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
 {
-	int kx, ky, kz;
-	double e0, e1, e2;
-	double b0, b1, b2;
-	double det, invDet, t;
-	vec3 S;
-	vec3 p0, p1, p2;
-	vec3 pt0, pt1, pt2;
+	vec3 d;
+	vec3 e1, e2;
+	vec3 s1, s2;
+	vec3 p1;
 	double2 uv0, uv1, uv2;
-	vec3 ray_dir_transformed;
+	double div, invDiv;
+	double b0, b1, b2;
+	double t;
 
-	p0 = ctx->vertices[ctx->tris[t_id].vertices[0]];
-	p1 = ctx->vertices[ctx->tris[t_id].vertices[1]];
-	p2 = ctx->vertices[ctx->tris[t_id].vertices[2]];
+	p1 = ctx->vertices[ctx->tris[t_id].vertices[0]];
 
-	kz = vec3_max_dimension(fabs(r.direction));
-	kx = (kz + 1) % 3;
-	ky = (kx + 1) % 3;
-	ray_dir_transformed = vec3_permute(r.direction, kx, ky, kz);
+	e1 = ctx->vertices[ctx->tris[t_id].vertices[1]] - p1;
+	e2 = ctx->vertices[ctx->tris[t_id].vertices[2]] - p1;
+	s1 = vec3_cross(r.direction, e2);
+	div = vec3_dot(s1, e1);
+	if(div == 0.)
+		return false;
+	invDiv = 1. / div;
 
-	pt0 = vec3_permute(p0 - r.origin, kx, ky, kz);
-	pt1 = vec3_permute(p1 - r.origin, kx, ky, kz);
-	pt2 = vec3_permute(p2 - r.origin, kx, ky, kz);
-	
-	S.z = 1. / ray_dir_transformed.z;
-	S.x = -ray_dir_transformed.x * S.z;
-	S.y = -ray_dir_transformed.y * S.z;
-
-	pt0.x += S.x * pt0.z;
-	pt0.y += S.y * pt0.z;
-	pt1.x += S.x * pt1.z;
-	pt1.y += S.y * pt1.z;
-	pt2.x += S.x * pt2.z;
-	pt2.y += S.y * pt2.z;
-
-	e0 = pt1.x * pt2.y - pt1.y * pt2.x;
-	e1 = pt2.x * pt0.y - pt2.y * pt0.x;
-	e2 = pt0.x * pt1.y - pt0.y * pt1.x;
-
-	if((e0 < 0 || e1 < 0 || e2 < 0) && (e0 > 0 || e1 > 0 || e2 > 0))
+	d = r.origin - p1;
+	b1 = vec3_dot(d, s1) * invDiv;
+	if(b1 < 0. || b1 > 1.)
 		return false;
 
-	det = e0 + e1 + e2;
-	if(det == 0)
+	s2 = vec3_cross(d, e1);
+	b2 = vec3_dot(r.direction, s2) * invDiv;
+	if(b2 < 0. || b1 + b2 > 1.)
 		return false;
-	
-	pt0.z *= S.z;
-	pt1.z *= S.z;
-	pt2.z *= S.z;
 
-	invDet = 1. / det;
-	t = (e0 * pt0.z + e1 * pt1.z + e2 * pt2.z) * invDet;
+	b0 = 1. - b1 - b2;
+
+	t = vec3_dot(e2, s2) * invDiv;
 	if(t < r.min_t || t > r.max_t)
 		return false;
-
-	b0 = e0 * invDet;
-	b1 = e1 * invDet;
-	b2 = e2 * invDet;
 
 	uv0 = ctx->uv[ctx->tris->uv[0]];
 	uv1 = ctx->uv[ctx->tris->uv[1]];
@@ -313,12 +345,21 @@ bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
 bool traverseScene(Ray r, Context *ctx)
 {
 	int i;
+	bool interact;
+	interact = false;
+#if 0
+	for(i = 0; i < ctx->host_ctx->scene_meta.triangles_count; i ++) {
+		if(interactionRayTriangle(i, r, ctx)) {
+			r.max_t = ctx->interaction.time;
+			ctx->interaction.triangle_id = i;
+			interact = true;
+		}
+	}
+#else
 	int stack[MAX_TREE_DEPTH + 1];
 	int seen [MAX_TREE_DEPTH + 1];
-	bool interact;
 	int last_node = 0;
 
-	interact = false;
 	seen[0] = 0;
 	stack[0] = ctx->host_ctx->scene_meta.tree.root;
 
@@ -355,13 +396,15 @@ bool traverseScene(Ray r, Context *ctx)
 			stack[last_node] = ctx->bvh_nodes[stack[last_node-1]].sons.x;
 		}
 	}
-
+#endif
 	return interact;
 }
 
 
 double compute_simple_ray(Ray ray, Context *ctx)
 {
+	int i, j;
+	double x, y, z;
 	SurfaceInteraction interaction;
 
 	if(!traverseScene(ray, ctx)) {
@@ -376,10 +419,42 @@ double compute_simple_ray(Ray ray, Context *ctx)
 	}
 
 	interaction = ctx->interaction;
+
+	if(interaction.m.normal_map.width > 0 && interaction.m.normal_map.height > 0) {
+		i = interaction.uv.x * interaction.m.normal_map.width;
+		j = interaction.uv.y * interaction.m.normal_map.height;
+
+		x = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 0] / 255.;
+		y = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 1] / 255.;
+		z = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 2] / 255.;
+		interaction.n = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
+	}
+
+	interaction.n = vec3_normalize(interaction.n);
+	interaction.dpdu = vec3_normalize(interaction.dpdu);
+	interaction.dpdv = vec3_normalize(interaction.dpdv);
+	
 	if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
 		ctx->host_ctx->selected_triangle = interaction.triangle_id;
 
-	interaction.n = vec3_normalize(interaction.n);
+#ifdef PRINT_DEBUG
+	if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y) {
+		printf("Normal: %f %f %f\n",
+			interaction.n.x, interaction.n.y, interaction.n.z);
+		printf("DPDU: %f %f %f\n",
+			interaction.dpdu.x, interaction.dpdu.y, interaction.dpdu.z);
+		printf("DPDV: %f %f %f\n",
+			interaction.dpdv.x, interaction.dpdv.y, interaction.dpdv.z);
+		printf("Hit: %f %f %f\n",
+			interaction.p.x, interaction.p.y, interaction.p.z);
+		printf("UV: %f %f\n",
+			interaction.uv.x, interaction.uv.y);
+		printf("Normal map: %d %d\n",
+			interaction.m.normal_map.width, interaction.m.normal_map.height);
+		printf("Time : %f\n",
+			interaction.time);
+	}
+#endif
 
 	if(ctx->host_ctx->selected_triangle == interaction.triangle_id)
 		return 1.;
@@ -388,7 +463,7 @@ double compute_simple_ray(Ray ray, Context *ctx)
 }
 
 
-double compute_ray(Ray ray, Context *ctx)
+int compute_ray(Ray ray, Context *ctx, PathElement *path)
 {
 	vec3 wi, wo;
 	int depth;
@@ -396,18 +471,21 @@ double compute_ray(Ray ray, Context *ctx)
 	SurfaceInteraction interaction;
 
 	int i, j;
-	double out;
     double weight;
 	double x, y, z;
 	double rrFactor;
 	double rrStopProbability;
 
     weight = 1;
-	out = 0;
 
-	for(depth = 0; weight > 0; depth ++) {
+	path[0] = (PathElement){
+		.p = ray.origin,
+		.weight = 1
+	};
+
+	for(depth = 0; weight > 0 && depth < MAX_DEPTH; depth ++) {
 		rrFactor = 1.0;
-		if(depth > MAX_DEPTH) {
+		if(depth > MAX_DEPTH_BEFORE_ROULETTE) {
 			rrStopProbability = 0.9;
 			double d = randDouble(ctx);
             if(d <= rrStopProbability) {
@@ -442,7 +520,7 @@ double compute_ray(Ray ray, Context *ctx)
 		ctx->interaction.dpdu = vec3_normalize(ctx->interaction.dpdu);
 		ctx->interaction.dpdv = vec3_normalize(ctx->interaction.dpdv);
 		interaction = ctx->interaction;
-
+/*
 		if(interaction.m.normal_map.width > 0 && interaction.m.normal_map.height > 0) {
 			i = interaction.uv.x * interaction.m.normal_map.width;
 			j = interaction.uv.y * interaction.m.normal_map.height;
@@ -458,6 +536,7 @@ double compute_ray(Ray ray, Context *ctx)
 			interaction.dpdu = vec3_normalize(interaction.n);
 			interaction.dpdv = vec3_normalize(interaction.n);
 		}
+*/
 
 		// Prepare the matrix
 		worldObject.mat.v4[0][0] = interaction.dpdu.x;
@@ -488,12 +567,10 @@ double compute_ray(Ray ray, Context *ctx)
 		matrix_transpose(&worldObject.matInv, worldObject.mat);
 
 		weight *= rrFactor;
-		out += weight * interaction.m.Le;
 
 		// Compute the ray's next direction
 		wi = vec3_normalize(transform_apply_vector(ray.direction, transform_inverse(worldObject)));
 		wo = material_sampleWo(&interaction.m, wi, ctx);
-
 		
 		if(wo.x == 0 && wo.y == 0 && wo.z == 0) {
 #ifdef PRINT_DEBUG
@@ -524,11 +601,16 @@ double compute_ray(Ray ray, Context *ctx)
 			printf("UV: %f %f\n",
 				interaction.uv.x, interaction.uv.y);
 			printf("BRDF: %f\n", material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda));
-			printf("Le: %f\n", interaction.m.Le);
-			printf("Time : %f\nOutput : %f\nWeight : %f\n",
-				interaction.time, out, weight);
+			printf("Time : %f\nWeight : %f\nTriangle : %d\n",
+				interaction.time, weight, interaction.triangle_id);
 		}
 #endif
+
+		// Update the path
+		path[depth+1] = (PathElement){
+			.p = interaction.p,
+			.weight = weight
+		};
 
 		// Compute the ray's next step
 		ray.origin = interaction.p;
@@ -537,7 +619,7 @@ double compute_ray(Ray ray, Context *ctx)
 		ray.direction = vec3_normalize(transform_apply_vector(wo, worldObject));
 	}
 
-    return out;
+    return depth+1;
 }
 
 kernel void compute_pixel(
@@ -548,11 +630,14 @@ kernel void compute_pixel(
 	__constant BVHNode *bvh_nodes,
 	__global HostContext *host_ctx,
 	__constant unsigned char *maps,
+	__constant Light *lights,
 	__global double *raw,
+	__global uint *sampleCountMap,
 	__write_only image2d_t output,
 	__global double *surface_irradiance
 )
 {
+	int i, j;
 	const int2 on_screen_pos = {get_global_id(0), get_global_id(1)};
 
 	Context ctx = {
@@ -564,10 +649,14 @@ kernel void compute_pixel(
 		.bvh_nodes = bvh_nodes,
 		.host_ctx = host_ctx,
 		.maps = maps,
+		.lights = lights,
 		.on_screen_pos = on_screen_pos,
 		.state =
-			host_ctx->seed * on_screen_pos.x * on_screen_pos.y + 1
+			host_ctx->seed + on_screen_pos.x * on_screen_pos.y
 	};
+
+	if(ctx.state % 2 == 0)
+		ctx.state ++;
 
 	double2 normalized_screen_pos = (double2) (
 		((double) (2 * on_screen_pos.x) / (double) host_ctx->camera.viewport.x) - 1.0f,
@@ -587,33 +676,73 @@ kernel void compute_pixel(
 	};
 	
 	const int index = on_screen_pos.x + host_ctx->camera.viewport.x * on_screen_pos.y;
+	double grayscale;
 
-	int4 output_final;
-	double output_spec;
-
-	if(ctx.host_ctx->simpleView)
-		output_spec = compute_simple_ray(ray, &ctx);
-	else
-		output_spec = compute_ray(ray, &ctx);
-
-	double scale;
-	if(host_ctx->simpleView) {
-		raw[index] = output_spec;
-		scale = 127 * output_spec;
+	if(ctx.host_ctx->simpleView) {
+		for(i = 0; i < host_ctx->scene_meta.lights_count; i ++)
+			if(interactionRaySphere(ray, ctx.lights[i].pos, 1e-1))
+				break;
+		if(i != host_ctx->scene_meta.lights_count) {
+			raw[index] = 0;
+			grayscale = 255;
+		} else {
+			raw[index] = compute_simple_ray(ray, &ctx);
+			grayscale = 127 * raw[index];
+		}
 	} else {
-		if(host_ctx->sampleCount <= 1)
+		int cam_path_length = 0;
+		int light_path_length = 0;
+		PathElement cam_path[MAX_DEPTH];
+		PathElement light_path[MAX_DEPTH];
+		
+		if(sampleCountMap[index] == 0)
 			raw[index] = 0;	
-		raw[index] += output_spec;
+		
+		cam_path_length = compute_ray(ray, &ctx, cam_path);
+
+		int light_id = randDouble(&ctx) * host_ctx->scene_meta.lights_count;
+		light_path_length = compute_ray(getRayFromLightSource(&ctx, light_id), &ctx, light_path);
+
+		double tmp;
+		if(light_path_length >= 1) {
+			tmp = vec3_dist_2(light_path[1].p, light_path[0].p);
+			for(j = 1; j < light_path_length; j ++)
+				light_path[i].weight /= tmp;
+		}
+
+		for(i = 0; i < cam_path_length; i ++) {
+			for(j = 0; j < light_path_length; j ++) {
+				ray = (Ray) {
+					.origin = cam_path[i].p,
+					.direction = light_path[j].p - cam_path[i].p,
+					.max_t = 1e10,		//NOTE: Purement arbitraire
+					.min_t = 1e-4
+				};
+
+				tmp = 0;
+				if(!traverseScene(ray, &ctx))
+					tmp = light_path[j].weight *
+						cam_path[i].weight *
+						lights[light_id].I;
+				
+				if(j == 0)
+					tmp /= vec3_dist_2(cam_path[i].p, light_path[j].p);
+
+				raw[index] += tmp;
+			}
+		}
+
+		sampleCountMap[index] += cam_path_length * light_path_length;
 
 #ifdef PRINT_DEBUG
 		if(ctx.on_screen_pos.x == ctx.host_ctx->mouse_pos.x && ctx.on_screen_pos.y == ctx.host_ctx->mouse_pos.y) {
-			printf("Mean weight : %f\n", raw[index] / host_ctx->sampleCount);
+			printf("Seed: %d; Mean weight : %f; Light's path's length: %d; Camera's path's length: %d\n",
+				host_ctx->seed,raw[index] / sampleCountMap[index], cam_path_length, light_path_length);
 		}
 #endif
-		scale = 127 * raw[index] / host_ctx->sampleCount;
+		grayscale = 127 * raw[index] / sampleCountMap[index];
 	}
 
-	output_final = INT4(scale, scale, scale, 0);
-	write_imagei(output, on_screen_pos, output_final);
+	write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
 }
 

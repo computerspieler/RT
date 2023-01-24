@@ -39,7 +39,7 @@ cl_int opencl_init_general_context(OpenCL_GeneralContext *cl_gen)
 
     err = clGetPlatformIDs(1, &cl_gen->platform, NULL);
     CHECK_ERR(clGetPlatformIDs, end);
-    err = clGetDeviceIDs(cl_gen->platform, CL_DEVICE_TYPE_ALL, 1, &cl_gen->device, NULL);
+    err = clGetDeviceIDs(cl_gen->platform, CL_DEVICE_TYPE_GPU, 1, &cl_gen->device, NULL);
     CHECK_ERR(clGetDeviceIDs, end);
     cl_gen->context = clCreateContext(NULL, 1, &cl_gen->device, NULL, NULL, &err);
     CHECK_ERR(clCreateContext, end);
@@ -86,17 +86,10 @@ int read_full_file(FILE *file, char **file_str, size_t *file_str_len)
     return 0;
 }
 
-cl_int opencl_add_program_source(OpenCL_ProgramContext *cl_prg, FILE *f)
+cl_int opencl_add_program_source(OpenCL_ProgramContext *cl_prg, char *text, size_t len)
 {
-    char *program_str;
-    size_t program_str_len;
-
-    if(read_full_file(f, 
-        &program_str, &program_str_len))
-        return -1;
-    
-    array_push(&cl_prg->programs_src, &program_str);
-    array_push(&cl_prg->programs_src_len, &program_str_len);
+    array_push(&cl_prg->programs_src, &text);
+    array_push(&cl_prg->programs_src_len, &len);
 
     return CL_SUCCESS;
 }
@@ -262,7 +255,6 @@ void opencl_run(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, si
     TRY(clEnqueueNDRangeKernel, exit,
         cl_gen->queue, cl_prg->kern, 2, origin, region, local, 0, NULL, NULL);
 	clFinish(cl_gen->queue);
-
 exit:
     return;
 }
@@ -274,41 +266,35 @@ void opencl_postrun(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg
 
     i = 0;
     for(CLBuffer* it = cl_prg->buffers.array; i < array_size(&cl_prg->buffers); it ++, i++) {
-        if(it->image) {
-            if(it->input)
-                TRY(clEnqueueWriteImage, exit,
-                    cl_gen->queue, it->cl, CL_TRUE,
-                    origin, region,
-                    0, 0,
-                    it->buf, 0,
-                    NULL, NULL
-                );
-            if(it->output)
-                TRY(clEnqueueReadImage, exit,
-                    cl_gen->queue, it->cl, CL_TRUE,
-                    origin, region,
-                    0, 0,
-                    it->buf, 0,
-                    NULL, NULL
-                );
-        } else {
-            if(it->input) {
-                TRY(clEnqueueWriteBuffer, exit,
-                    cl_gen->queue, it->cl, CL_FALSE, 0,
-                    it->len, it->buf,
-                    0, NULL, NULL
-                );
-            }
-            
-            if(it->output) {
-                TRY(clEnqueueReadBuffer, exit,
-                    cl_gen->queue, it->cl, CL_TRUE,
-                    0, it->len,
-                    it->buf, 0,
-                    NULL, NULL
-                );
-            }
-        }
+		if(it->image && it->input)
+			TRY(clEnqueueWriteImage, exit,
+				cl_gen->queue, it->cl, CL_TRUE,
+				origin, region,
+				0, 0,
+				it->buf, 0,
+				NULL, NULL
+			);
+		if(it->image && it->output)
+			TRY(clEnqueueReadImage, exit,
+				cl_gen->queue, it->cl, CL_TRUE,
+				origin, region,
+				0, 0,
+				it->buf, 0,
+				NULL, NULL
+			);
+		if(!it->image && it->input)
+			TRY(clEnqueueWriteBuffer, exit,
+				cl_gen->queue, it->cl, CL_FALSE, 0,
+				it->len, it->buf,
+				0, NULL, NULL
+			);
+		if(!it->image && it->output)
+			TRY(clEnqueueReadBuffer, exit,
+				cl_gen->queue, it->cl, CL_TRUE,
+				0, it->len,
+				it->buf, 0,
+				NULL, NULL
+			);
 
 		clFinish(cl_gen->queue);
     }

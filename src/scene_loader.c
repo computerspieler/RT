@@ -16,6 +16,7 @@
 #include "spectrum.h"
 #include "tree.h"
 #include "map.h"
+#include "light.h"
 
 int readSpectrum(FILE *f, Spectrum *out)
 {
@@ -84,8 +85,6 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
             if(!initialized)
                 initialized = true;
         }
-		else if(strcmp(buffer, "Le") == 0)
-			fscanf(f, "%lf\n", &mat.Le);
 		else if(strcmp(buffer, "norm") == 0) {
 			fscanf(f, "%s\n", buffer);
 			FILE *fn = fopen(buffer, "r");
@@ -190,6 +189,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 {
     FILE *fm;
     vec3 vertex;
+	Light light;
     double2 vertex_uv;
     Triangle triangle;
 
@@ -198,7 +198,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     char *name;
     uint current_material = -1;
     uint str_length = 0;
-    Array vertices, tex, triangles, groups, material_name, materials, maps;
+    Array vertices, tex, triangles, groups, material_name, materials, maps, lights;
     Node *materials_tree, *n;
 
     assert(obj);
@@ -214,6 +214,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     material_name = array_create(sizeof(char*));
     material_name = array_create(sizeof(char*));
     maps = array_create(sizeof(unsigned char));
+    lights = array_create(sizeof(Light));
 
     if(!f) {
         perror("File");
@@ -284,6 +285,10 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 
             if(res)
                 goto err;
+        } else if(strcmp(buffer, "lp") == 0) {
+            fscanf(f, "%lf %lf %lf %lf\n", &light.pos.x, &light.pos.y, &light.pos.z, &light.I);
+            light.type = LIGHT_POINT;
+            array_push(&lights, &light);
         } else
             while (fgetc(f) != '\n');
     }
@@ -298,7 +303,8 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
         .vertices_tex_count = array_size(&tex),
         .vertices_count = array_size(&vertices),
         .use_uv = use_uv,
-		.map_size = array_size(&maps)
+		.map_size = array_size(&maps),
+		.lights_count = array_size(&lights)
     };
 
     *obj = (Scene) {
@@ -306,7 +312,8 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
         .vertices = vertices.array,
         .vertices_tex = tex.array,
         .materials = materials.array,
-		.map = maps.array
+		.map = maps.array,
+		.lights = lights.array
     };
 
     buildBVHTreeFromObject(*obj, metadata);
@@ -315,6 +322,13 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 	    vec3 p0 = obj->vertices[obj->triangles[i].vertices[0]];
 	    vec3 p1 = obj->vertices[obj->triangles[i].vertices[1]];
 	    vec3 p2 = obj->vertices[obj->triangles[i].vertices[2]];
+
+		assert(obj->triangles[i].uv[0] >= 0);
+		assert(obj->triangles[i].uv[1] >= 0);
+		assert(obj->triangles[i].uv[2] >= 0);
+		assert(obj->triangles[i].uv[0] < metadata->vertices_tex_count);
+		assert(obj->triangles[i].uv[1] < metadata->vertices_tex_count);
+		assert(obj->triangles[i].uv[2] < metadata->vertices_tex_count);
 
 	    double2 uv0 = obj->vertices_tex[obj->triangles[i].uv[0]];
 	    double2 uv1 = obj->vertices_tex[obj->triangles[i].uv[1]];
@@ -347,7 +361,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             );
         }
 
-/*
         printf("=== Triangle id: %zu ===\n", i);
         printf("Points %d %d %d\n",
             obj->triangles[i].vertices[0],
@@ -378,7 +391,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             obj->triangles[i].dpdv.x,
             obj->triangles[i].dpdv.y,
             obj->triangles[i].dpdv.z);
-*/
     }
 
     printf("Scene file sucessfully loaded\n");
@@ -391,6 +403,9 @@ err:
     array_free(&tex);
     array_free(&triangles);
     array_free(&groups);
+    array_free(&materials);
+    array_free(&maps);
+    array_free(&lights);
 
     return -1;
 }

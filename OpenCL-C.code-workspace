@@ -6,7 +6,8 @@
     ],
     "settings": {
         "clang.cflags": [
-            "-I/home/user/TIPE/OpenCL-C/include"
+            "-I/home/user/TIPE/OpenCL-C/include",
+            "-I/home/user/TIPE/OpenCL-C/bin/headers"
         ]
     }
 }

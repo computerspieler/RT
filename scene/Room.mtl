@@ -1,19 +1,15 @@
 # Blender MTL File: 'None'
 # Material Count: 1
 newmtl Wall 1
-Le 0
 rho 0.3
 
 newmtl Table 1
-Le 0
 rho 0.3
 
 newmtl RoofLight 1
-Le 20
 rho 0.1
 
 newmtl SunLight 1
-Le 1000
 rho 0.1
 
 newmtl Blackboard 1

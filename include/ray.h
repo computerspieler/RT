@@ -23,8 +23,6 @@ struct SurfaceInteraction
 
 	vec3 dpdu;
 	vec3 dpdv;
-	vec3 dndu;
-	vec3 dndv;
 
 	double time;
 	int triangle_id;

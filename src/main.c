@@ -20,6 +20,7 @@
 #include "camera.h"
 #include "transform.h"
 #include "host.h"
+#include "kernel/main.cl.h"
 
 #define SDL_FATAL(func)						\
 {											\
@@ -27,55 +28,11 @@
 	exit(EXIT_FAILURE);						\
 }
 
-#define SCREEN_WIDTH  320
-#define SCREEN_HEIGHT 320
+#define SCREEN_WIDTH  120
+#define SCREEN_HEIGHT 120
 
 #define SURFACE_WIDTH  100
 #define SURFACE_HEIGHT 100
-
-const char* CL_COMPILE_FLAGS =
-	" -D IN_OPENCL "
-	" -I include "
-	" -I kernel "
-	" -I common "
-	" -D PRINT_DEBUG "
-	;
-
-cl_int add_folder(OpenCL_ProgramContext *cl, const char *path)
-{
-	DIR *d;
-	FILE *f;
-	struct dirent *dir;
-	char fullpath[PATH_MAX];
-
-	d = opendir(path);
-	if(!d) {
-		perror("opendir");
-		return -1;
-	}
-
-	while((dir = readdir(d)) != NULL) {
-		if(dir->d_type != DT_REG)
-			continue;
-
-		sprintf(fullpath, "%s/%s", path, dir->d_name);
-		printf("Load %s\n", fullpath);
-
-		f = fopen(fullpath, "r");
-		if(!f) {
-			perror("fopen");
-			closedir(d);
-			return -2;
-		}
-
-		opencl_add_program_source(cl, f);
-		fclose(f);
-	}
-
-	closedir(d);
-
-	return CL_SUCCESS;
-}
 
 long long get_current_time()
 {
@@ -85,7 +42,7 @@ long long get_current_time()
 }
 
 const cl_double speed = 0.125f;
-int main(void)
+int main(int argc, char* argv[])
 {
 	bool update;
 	FILE *f;
@@ -98,7 +55,8 @@ int main(void)
 	int running = 1;
 	size_t origin[3] = {0};
 	size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT, 1};
-	void *b;
+	void *output;
+	uint *samplingCountMap;
 
 	HostContext ctx = (HostContext) {
 		.camera = (Camera) {
@@ -118,6 +76,11 @@ int main(void)
 			transform_rotate_y(ctx.camera.rot.y)
 		), transform_rotate_z(ctx.camera.rot.z)
 	);
+
+	if(argc != 2) {
+		printf("Usage: program [SCENE]\n");
+		return -1;
+	}
 
 	srand(time(NULL));
 
@@ -148,16 +111,12 @@ int main(void)
 	if(err != CL_SUCCESS)
 		goto exit;
 
-	err = add_folder(&cl_prg, "common");
-	if(err != CL_SUCCESS)
-		goto exit;
-
-	err = add_folder(&cl_prg, "kernel");
+	err = opencl_add_program_source(&cl_prg, kernel_main_cl_src, sizeof(kernel_main_cl_src));
 	if(err != CL_SUCCESS)
 		goto exit;
 
 	// Load the scene
-	f = fopen("scene/Room.obj", "r");
+	f = fopen(argv[1], "r");
 	if(loadFromObj(f, &obj, &ctx.scene_meta, false))
 		goto exit;
 	fclose(f);
@@ -168,8 +127,7 @@ int main(void)
 
 	printf("Compile the program\n");
 	sprintf(
-		buffer, "%s -DMAX_TREE_DEPTH=%u",
-		CL_COMPILE_FLAGS,
+		buffer, "-DMAX_TREE_DEPTH=%u",
 		BVHTree_depth(ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.root)
 	);
 
@@ -198,11 +156,20 @@ int main(void)
 	TRY(opencl_add_input_buffer, exit,
 		&cl_gen, &cl_prg, obj.map, ctx.scene_meta.map_size * sizeof(unsigned char));
 	
-	b = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
-	bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
+
+	output = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+	bzero(output, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+
+	samplingCountMap = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(uint));
+	bzero(samplingCountMap, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(uint));
 	
 	TRY(opencl_add_input_output_buffer, exit,
-		&cl_gen, &cl_prg, b, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(double));
+		&cl_gen, &cl_prg, output, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(double));
+	
+	TRY(opencl_add_input_output_buffer, exit,
+		&cl_gen, &cl_prg, samplingCountMap, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint));
 
 	TRY(opencl_add_output_image, exit,
 		&cl_gen, &cl_prg, (cl_uchar4**) &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
@@ -215,7 +182,6 @@ int main(void)
 		&cl_gen, &cl_prg, irradiance, SURFACE_WIDTH * SURFACE_HEIGHT * sizeof(double));
 
 	printf("Run the program\n");
-	ctx.sampleCount = 0;
 	opencl_prerun(&cl_prg);
     ctx.lambda = 400;
 
@@ -227,12 +193,11 @@ int main(void)
 			SDL_LockSurface(screen);
 			for(int i = 0; i < 1; i ++) {
 				long long start = get_current_time();
-				ctx.seed = (unsigned int) get_current_time() * get_current_time();
-				ctx.sampleCount++;
+				ctx.seed = (uint) start * start;
 				opencl_run(&cl_gen, &cl_prg, origin, region);
 				opencl_postrun(&cl_gen, &cl_prg, origin, region);
-				printf("Milliseconds spent: %lld, sampling count: %d, time since the beginning: %lld, Wavelength: %d\n",
-					get_current_time() - start, ctx.sampleCount, (get_current_time() - first_start) / 1000,
+				printf("Milliseconds spent: %lld, time since the beginning: %lld, Wavelength: %d\n",
+					get_current_time() - start, (get_current_time() - first_start) / 1000,
 					ctx.lambda);
 			}
 			SDL_UnlockSurface(screen);
@@ -281,8 +246,10 @@ int main(void)
 					), transform_rotate_z(ctx.camera.rot.z)
 				);
 				
-				bzero(b, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double) * 4);
-				ctx.sampleCount = 0;
+				if(!ctx.simpleView) {
+					bzero(output, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(double));
+					bzero(samplingCountMap, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(uint));
+				}
 				break;
 			
 			case SDL_MOUSEMOTION:

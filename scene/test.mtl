@@ -16,7 +16,6 @@ Td 0
 newmtl Light 1
 rho 0.5
 R 2
-Le 8.69
 
 newmtl Glass 4
 IOR 1.5
