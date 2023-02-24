@@ -1,6 +1,6 @@
 #include "typedef.h"
 
-double lerp(double t, double x1, double x2)
+Float lerp(Float t, Float x1, Float x2)
 {
 	return (1 - t) * x1 + t * x2;
 }

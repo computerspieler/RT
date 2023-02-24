@@ -1,6 +1,7 @@
+#include "typedef.h"
 #include <math.h>
 
-double rsqrt(double x)
+Float rsqrt(Float x)
 {
     return 1 / sqrt(x);
 }

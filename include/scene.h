@@ -11,15 +11,15 @@
 typedef struct Triangle Triangle;
 struct Triangle
 {
-    uint vertices[3];
-    uint uv[3];
+    long int vertices[3];
+    long int uv[3];
 
     vec3 normal;
     vec3 dpdu;
     vec3 dpdv;
 
-    uint material;
-    uint group;
+    long int material;
+    long int group;
 };
 
 typedef struct SceneMetadata SceneMetadata;
@@ -46,7 +46,7 @@ typedef struct Scene Scene;
 struct Scene
 {
     vec3 *vertices;
-    double2 *vertices_tex;
+    vec2 *vertices_tex;
     
     Triangle *triangles;
 

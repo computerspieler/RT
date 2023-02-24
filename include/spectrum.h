@@ -8,7 +8,7 @@
 #define SPECTRUM_STEP   (80)
 #define SPECTRUM_SIZE   ((SPECTRUM_END-SPECTRUM_START) / SPECTRUM_STEP)
 
-typedef double Spectrum[SPECTRUM_SIZE];
+typedef Float Spectrum[SPECTRUM_SIZE];
 
 #define spectrum_add(sout, s1, s2) \
     for(int i = 0; i < SPECTRUM_SIZE; i ++) \
@@ -45,10 +45,10 @@ typedef double Spectrum[SPECTRUM_SIZE];
 #define spectrum_val(s, lambda) \
     s[(lambda - SPECTRUM_START) / SPECTRUM_STEP]
 
-double spectrum_sum(Spectrum *s);
-double spectrum_avg(Spectrum *s);
+Float spectrum_sum(Spectrum *s);
+Float spectrum_avg(Spectrum *s);
 
-double3 spectrum_to_xyz(int lambda);
-double3 spectrum_to_rgb(int lambda);
+vec3 spectrum_to_xyz(int lambda);
+vec3 spectrum_to_rgb(int lambda);
 
 #endif

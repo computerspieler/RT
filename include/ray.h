@@ -11,7 +11,7 @@ struct Ray
 	vec3 origin;				// Origine
 	vec3 direction;			// Direction
 
-	double min_t, max_t;	// L'interval dans lequel le temps doit être compris
+	Float min_t, max_t;	// L'interval dans lequel le temps doit être compris
 };
 
 typedef struct SurfaceInteraction SurfaceInteraction;
@@ -19,12 +19,12 @@ struct SurfaceInteraction
 {
 	vec3 p;		// Point
 	vec3 n;		// Normal
-	double2 uv;
+	vec2 uv;
 
 	vec3 dpdu;
 	vec3 dpdv;
 
-	double time;
+	Float time;
 	int triangle_id;
 	Material m;
 };

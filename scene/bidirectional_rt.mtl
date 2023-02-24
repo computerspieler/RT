@@ -1,0 +1,8 @@
+# Blender MTL File: 'bidirectional_rt.blend'
+# Material Count: 1
+
+newmtl Material 1
+R 0.3
+
+newmtl None 0
+norm scene/normal_map.ppm

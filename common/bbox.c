@@ -73,7 +73,7 @@ bool bbox_p_insideExclusive(vec3 p, BBox3 b)
             p.z >= b.min.z && p.z < b.max.z);
 }
 
-BBox3 bbox_p_expand(BBox3 b, double delta)
+BBox3 bbox_p_expand(BBox3 b, Float delta)
 {
 	vec3 v_delta;
 	v_delta.x = v_delta.y = v_delta.z = delta;
@@ -89,13 +89,13 @@ vec3 bbox_diagonal(BBox3 b)
 	return vec3_diff(b.max, b.min);
 }
 
-double bbox_surface_area(BBox3 b)
+Float bbox_surface_area(BBox3 b)
 {
 	vec3 diag = bbox_diagonal(b);
 	return 2 * vec3_norm_2(diag);
 }
 
-double bbox_surface_volume(BBox3 b)
+Float bbox_surface_volume(BBox3 b)
 {
 	vec3 diag = bbox_diagonal(b);
 	return diag.x * diag.y * diag.z;

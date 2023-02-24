@@ -1,5 +1,6 @@
 #define MAX_DEPTH_BEFORE_ROULETTE	0
 #define MAX_DEPTH					20
+#define RAY_EPSILON					1e-4
 
 #include "bvhtree.h"
 #include "vec3.h"
@@ -30,13 +31,17 @@ struct Context
 	SurfaceInteraction interaction;
 	__constant Material *materials;
 	__constant vec3 *vertices;
-	__constant double2 *uv;
+	__constant vec2 *uv;
 	__constant Triangle *tris;
 	__constant BVHNode *bvh_nodes;
 	__constant unsigned char *maps;
 	__constant Light *lights;
+	__constant HostContext *host_ctx;
 
-	__global HostContext *host_ctx;
+	__global int *selected_triangle_ptr;
+
+	int selected_triangle;
+	bool selectedByCursor;
 	uint state;
 	int2 on_screen_pos;
 };
@@ -45,78 +50,119 @@ typedef struct PathElement PathElement;
 struct PathElement
 {
 	vec3 p;
-	double weight;
+	Float weight;
+    int triangle_id;
+	bool normalReversed;
 };
 
-double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda);
-vec3 material_sampleWo(Material *m, vec3 wi, Context *ctx);
-
-unsigned int randInt(Context *ctx)
+uint randInt(Context *ctx)
 {
-	unsigned int x = ctx->state;
+	uint x = ctx->state;
 	x ^= x << 13;
 	x ^= x >> 17;
 	x ^= x << 5;
 	return ctx->state = x;
 }
 
-double randDouble(Context *ctx)
+Float randFloat(Context *ctx)
 {
-	return fabs((double) (randInt(ctx)) / (double) (0xFFFFFFFF));
+	return fabs((Float) (randInt(ctx)) / (Float) (0xFFFFFFFF));
 }
 
 vec3 UniformSphereSampling(Context *ctx)
 {
-	const double u1 = 2 * M_PI * randDouble(ctx);
-	const double u2 = 2 * M_PI * randDouble(ctx);
+	const Float u1 = 2. * randFloat(ctx) - 1.;
+	const Float u2 = randFloat(ctx);
 
-	const double r = cos(u1);
+    const Float phi = 2. * M_PI * u2;
+    const Float r = sqrt(1. - u1 * u1);
 	vec3 output;
 
-	output.x = cos(u2) * r;
-	output.y = sin(u2) * r;
-	output.z = sin(u1);
+	output.x = cos(phi) * r;
+	output.y = sin(phi) * r;
+	output.z = u1;
+
+    return output;
+}
+
+// Source: https://www.rorydriscoll.com/2009/01/07/better-sampling/
+vec3 UniformSampleHemisphere(Context *ctx)
+{
+	const Float u1 = randFloat(ctx);
+	const Float u2 = randFloat(ctx);
+
+    const Float phi = 2. * M_PI * u2;
+    const Float r = sqrt(1. - u1 * u1);
+	vec3 output;
+
+	output.x = cos(phi) * r;
+	output.y = sin(phi) * r;
+	output.z = u1;
+
+    return output;
+}
+
+// Source: https://www.rorydriscoll.com/2009/01/07/better-sampling/
+vec3 CosineSampleHemisphere(Context *ctx)
+{
+	const Float u1 = randFloat(ctx);
+	const Float u2 = randFloat(ctx);
+
+    const Float theta = 2. * M_PI * u2;
+    const Float r = sqrt(u1);
+	vec3 output;
+
+	output.x = cos(theta) * r;
+	output.y = sin(theta) * r;
+	output.z = sqrt(fmax(0., 1. - u1));
 
     return output;
 }
 
 Ray getRayFromLightSource(Context *ctx, int light_id) {
-	return (Ray) {
+	vec3 w;
+	Ray output = (Ray) {
 		.origin = ctx->lights[light_id].pos,
-		.direction = UniformSphereSampling(ctx),
-		.min_t = 1e-4,
+		.min_t = RAY_EPSILON,
 		.max_t = 1e10
 	};
+
+	switch(ctx->lights[light_id].type) {
+	case LIGHT_POINT:
+		output.direction = UniformSphereSampling(ctx);
+		break;
+
+	case LIGHT_AREA:
+		w = UniformSampleHemisphere(ctx);
+		output.direction = 
+			w.x * ctx->lights[light_id].area_tan +
+			w.y * ctx->lights[light_id].area_bitan;
+		
+		if(randFloat(ctx) <= 0.5)
+			output.direction += w.z * ctx->lights[light_id].area_n;
+		else
+			output.direction -= w.z * ctx->lights[light_id].area_n;
+		
+		output.origin +=
+			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_width ) * ctx->lights[light_id].area_tan +
+			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_height) * ctx->lights[light_id].area_bitan;
+		break;
+	}
+
+	return output;
 }
 
-// https://www.rorydriscoll.com/2009/01/07/better-sampling/
-vec3 CosineSampleHemisphere(Context *ctx)
-{
-	const double u1 = randDouble(ctx);
-	const double u2 = randDouble(ctx);
 
-	const double r = sqrt(u1);
-	const double theta = 2 * M_PI * u2;
-
-	vec3 output;
-
-	output.x = cos(theta) * r;
-	output.y = sin(theta) * r;
-	output.z = sqrt(max(0., 1. - u1));
-
-    return output;
-}
-
-double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
+Float material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
 {
     vec3 valid_wo;
-	double output;
-    double A, B, sigma2, max_cos;
-    double sin_alpha, tan_beta;
-    double sin_theta_wi, sin_theta_wo;
-    double cos_theta_wi, cos_theta_wo;
-    double sin_phi_wi, sin_phi_wo;
-    double cos_phi_wi, cos_phi_wo;
+	Float output;
+    Float A, B, sigma2, max_cos;
+    Float sin_alpha, tan_beta;
+    Float sin_theta_wi, sin_theta_wo;
+    Float cos_theta_wi, cos_theta_wo;
+    Float sin_phi_wi, sin_phi_wo;
+    Float cos_phi_wi, cos_phi_wo;
 
     output = 0;
 
@@ -128,7 +174,7 @@ double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
     switch(m->type) {
         case MATERIAL_NONE: break;
         case MATERIAL_LAMBERTIAN:
-            output = m->l.rho * M_1_PI;
+            output = m->l.R * M_1_PI;
             break;
         case MATERIAL_MIRROR:
             output = 1;
@@ -137,33 +183,6 @@ double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
         case MATERIAL_GLASS:
 			output = 1;
 			break;
-
-        case MATERIAL_OREN_NAYAR:
-            sigma2 = m->on.sigma * m->on.sigma;
-            A = 1. - (sigma2 / (2. * sigma2 + 0.66));
-            B = .45 * sigma2 / (sigma2 + 0.09);
-
-            max_cos = 0;
-            if(sin_theta_wi != 0 && sin_theta_wo != 0) {
-                cos_phi_wi = (sin_theta_wi == 0) ? 1 : clamp(wi.x / sin_theta_wi, -1., 1.);
-                cos_phi_wo = (sin_theta_wo == 0) ? 1 : clamp(wo.x / sin_theta_wo, -1., 1.);
-                sin_phi_wi = sqrt(1 - cos_phi_wi * cos_phi_wi);
-                sin_phi_wo = sqrt(1 - cos_phi_wo * cos_phi_wo);
-
-                // Note : cos(a - b) = cos(a)cos(b) + sin(a)sin(b)
-                max_cos = fmax(0., cos_phi_wi * cos_phi_wo + sin_phi_wi * sin_phi_wo);
-            }
-
-            if(fabs(cos_theta_wi) > fabs(cos_theta_wo)) {
-                sin_alpha = sin_theta_wo;
-                tan_beta = sin_theta_wi / fabs(cos_theta_wi);
-            } else {
-                sin_alpha = sin_theta_wi;
-                tan_beta = sin_theta_wo / fabs(cos_theta_wo);
-            }
-
-            output = m->on.R * M_1_PI * (A + B * max_cos * sin_alpha * tan_beta);
-            break;
     }
 
     return output;
@@ -172,11 +191,11 @@ double material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
 vec3 material_sampleWo(Material *m, vec3 wi, Context *ctx)
 {
 	vec3 wo;
-	double R0, R_theta;
-    double cos_theta_wi;
-	double theta_incident;
-    double theta_refracted;
-    double sin_theta_refracted;
+	Float R0, R_theta;
+    Float cos_theta_wi;
+	Float theta_incident;
+    Float theta_refracted;
+    Float sin_theta_refracted;
 
 	wo = VEC3(0, 0, 0);
     switch(m->type) {
@@ -193,13 +212,13 @@ vec3 material_sampleWo(Material *m, vec3 wi, Context *ctx)
 			R0 = R0 * R0;
 			R_theta = R0 + (1-R0) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z);
 
-#ifdef PRINT_DEBUG
-			if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y) {
-				printf("Wi.z: %f; Theta_i: %f; sin(Theta_o): %f; IOR: %f; R(theta): %f\n",
+#if PRINT_DEBUG>=3
+			if(ctx->selectedByCursor) {
+				printf("Wi.z: " FLOAT_FMT "; Theta_i: " FLOAT_FMT "; sin(Theta_o): " FLOAT_FMT "; IOR: " FLOAT_FMT "; R(theta): " FLOAT_FMT "\n",
 					wi.z, theta_incident, sin_theta_refracted, m->g.IOR, R_theta);
 			}
 #endif	
-			if(randDouble(ctx) > R_theta && sin_theta_refracted <= 1 && sin_theta_refracted >= -1) {
+			if(randFloat(ctx) > R_theta && sin_theta_refracted <= 1 && sin_theta_refracted >= -1) {
 				theta_refracted = asin(sin_theta_refracted);
 				wo.z -= cos_theta_wi;
 				if(cos_theta_wi > 0)
@@ -216,16 +235,23 @@ vec3 material_sampleWo(Material *m, vec3 wi, Context *ctx)
             wo.z *= -1;
 			break;
         case MATERIAL_LAMBERTIAN:
-        case MATERIAL_OREN_NAYAR:
 			wo = CosineSampleHemisphere(ctx);
-			if(wi.z > 0)
-				wo.z *= -1;
+			wo.z *= -1;
 			break;
     }
 	return wo;
 }
 
-double material_p_Wo(Material *m, vec3 wi, vec3 wo, Context *ctx)
+Float light_pdf(Context *ctx, int light_id) {
+	switch(ctx->lights[light_id].type) {
+	case LIGHT_POINT:
+		return .25 * M_1_PI;
+	case LIGHT_AREA:
+		return .25 * M_1_PI / (ctx->lights[light_id].area_width * ctx->lights[light_id].area_height);
+	}
+}
+
+Float material_pdf_Wo(Material *m, vec3 wi, vec3 wo, Context *ctx)
 {
 	switch(m->type) {
         case MATERIAL_NONE:
@@ -233,57 +259,80 @@ double material_p_Wo(Material *m, vec3 wi, vec3 wo, Context *ctx)
         case MATERIAL_GLASS:
             return 1;
         case MATERIAL_LAMBERTIAN:
-        case MATERIAL_OREN_NAYAR:
-			return fabs(wo.z) / M_PI;
+			return fabs(wo.z);
     }
 }
 
-bool interactionRayBBox(Context *ctx, BBox3 b, Ray r)
+bool interactionRayBBox(BBox3 b, Ray r)
 {
 	vec3 t1, t2;
-	double tmin, tmax;
+	Float tmin, tmax;
 
 	t1 = (b.min - r.origin) / r.direction;
 	t2 = (b.max - r.origin) / r.direction;
 
 	tmin = max(
 		max(
-			(double) min(t1.x, t2.x),
-			(double) min(t1.y, t2.y)
-		),  (double) min(t1.z, t2.z)
+			(Float) min(t1.x, t2.x),
+			(Float) min(t1.y, t2.y)
+		),  (Float) min(t1.z, t2.z)
 	);
 
 	tmax = min(
 		min(
-			(double) max(t1.x, t2.x),
-			(double) max(t1.y, t2.y)
-		),  (double) max(t1.z, t2.z)
+			(Float) max(t1.x, t2.x),
+			(Float) max(t1.y, t2.y)
+		),  (Float) max(t1.z, t2.z)
 	);
 
-	return tmax >= tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin < r.max_t;
+	return tmax >= tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin <= r.max_t;
 }
 
-bool interactionRaySphere(Ray r, vec3 center, double radius)
+bool interactionRaySphere(Ray r, vec3 center, Float radius)
 {
-	vec3 L = center - r.origin;
-	double a = vec3_norm_2(r.direction);
-	double b = 2. * vec3_dot(r.direction, L);
-	double c = vec3_norm_2(L) - radius*radius;
+	vec3 L = r.origin - center;
+	Float a = vec3_norm_2(r.direction);
+	Float b = vec3_dot(r.direction, L);
+	Float c = vec3_norm_2(L) - radius*radius;
 
-	double discr = b*b - 4*a*c;
-	if(discr < 0) return false;
+	Float discr = b*b - a*c;
+	if(discr <= 0) return false;
 
 	discr = sqrt(discr);
-	double t0 = (b - discr) / (2. * a);
-	double t1 = (b + discr) / (2. * a);
+	Float t0 = (- b - discr) / a;
+	Float t1 = (- b + discr) / a;
 
 	if(t0 > t1) {
-		double tmp = t0;
+		Float tmp = t0;
 		t0 = t1;
 		t1 = tmp;
 	}
 
+	if(t0 < 0)
+		t0 = t1;
+
 	return t0 > r.min_t && t0 < r.max_t;
+}
+
+bool interactionRayLight(Ray r, Light l)
+{
+	BBox3 b;
+	vec3 tmp;
+	switch(l.type) {
+	case LIGHT_POINT:
+		return interactionRaySphere(r, l.pos, 1e-1);
+	
+	case LIGHT_AREA:
+		tmp =
+			(Float) (.5)   * l.area_width   * l.area_tan   +
+			(Float) (.5)   * l.area_height  * l.area_bitan +
+			(Float) (RAY_EPSILON) * l.area_n;
+		b = (BBox3) {
+			.min = l.pos - tmp,
+			.max = l.pos + tmp
+		};
+		return interactionRayBBox(b, r);
+	}
 }
 
 bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
@@ -292,10 +341,10 @@ bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
 	vec3 e1, e2;
 	vec3 s1, s2;
 	vec3 p1;
-	double2 uv0, uv1, uv2;
-	double div, invDiv;
-	double b0, b1, b2;
-	double t;
+	vec2 uv0, uv1, uv2;
+	Float div, invDiv;
+	Float b0, b1, b2;
+	Float t;
 
 	p1 = ctx->vertices[ctx->tris[t_id].vertices[0]];
 
@@ -320,7 +369,7 @@ bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
 	b0 = 1. - b1 - b2;
 
 	t = vec3_dot(e2, s2) * invDiv;
-	if(t < r.min_t || t > r.max_t)
+	if(t <= r.min_t || t >= r.max_t)
 		return false;
 
 	uv0 = ctx->uv[ctx->tris->uv[0]];
@@ -372,7 +421,7 @@ bool traverseScene(Ray r, Context *ctx)
 			seen[last_node] = 0;
 			stack[last_node] = ctx->bvh_nodes[stack[last_node-1]].sons.y;
 		}
-		else if(!interactionRayBBox(ctx, ctx->bvh_nodes[stack[last_node]].bounds, r))
+		else if(!interactionRayBBox(ctx->bvh_nodes[stack[last_node]].bounds, r))
 			last_node --;
 		
 		// Si c'est une feuille
@@ -401,133 +450,145 @@ bool traverseScene(Ray r, Context *ctx)
 }
 
 
-double compute_simple_ray(Ray ray, Context *ctx)
+Float compute_simple_ray(Ray ray, Context *ctx)
 {
 	int i, j;
-	double x, y, z;
-	SurfaceInteraction interaction;
-
+	Float x, y, z;
+	vec3 n;
+	//vec3 dpdu, dpdv;
+	
 	if(!traverseScene(ray, ctx)) {
-		if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
-			ctx->host_ctx->selected_triangle = -1;
+		if(ctx->selectedByCursor) {
+			ctx->selected_triangle = -1;
+			*(ctx->selected_triangle_ptr) = -1;
+		}
 
-#ifdef PRINT_DEBUG
-		if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
+#if PRINT_DEBUG>=3
+		if(ctx->selectedByCursor)
 			printf("Out !\n");
 #endif
 		return 0;
 	}
 
-	interaction = ctx->interaction;
+	if(ctx->interaction.m.normal_map.width > 0 && ctx->interaction.m.normal_map.height > 0) {
+		i = ctx->interaction.uv.x * ctx->interaction.m.normal_map.width;
+		j = ctx->interaction.uv.y * ctx->interaction.m.normal_map.height;
 
-	if(interaction.m.normal_map.width > 0 && interaction.m.normal_map.height > 0) {
-		i = interaction.uv.x * interaction.m.normal_map.width;
-		j = interaction.uv.y * interaction.m.normal_map.height;
+		x = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 0] / 255.;
+		y = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 1] / 255.;
+		z = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 2] / 255.;
+		
+		n = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
+		n = vec3_normalize(n);
+	} else
+		n = ctx->interaction.n;
 
-		x = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 0] / 255.;
-		y = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 1] / 255.;
-		z = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 2] / 255.;
-		interaction.n = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
+	if(ctx->selectedByCursor) {
+		ctx->selected_triangle = ctx->interaction.triangle_id;
+		*(ctx->selected_triangle_ptr) = ctx->interaction.triangle_id;
 	}
 
-	interaction.n = vec3_normalize(interaction.n);
-	interaction.dpdu = vec3_normalize(interaction.dpdu);
-	interaction.dpdv = vec3_normalize(interaction.dpdv);
-	
-	if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
-		ctx->host_ctx->selected_triangle = interaction.triangle_id;
-
-#ifdef PRINT_DEBUG
-	if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y) {
-		printf("Normal: %f %f %f\n",
-			interaction.n.x, interaction.n.y, interaction.n.z);
-		printf("DPDU: %f %f %f\n",
-			interaction.dpdu.x, interaction.dpdu.y, interaction.dpdu.z);
-		printf("DPDV: %f %f %f\n",
-			interaction.dpdv.x, interaction.dpdv.y, interaction.dpdv.z);
-		printf("Hit: %f %f %f\n",
-			interaction.p.x, interaction.p.y, interaction.p.z);
-		printf("UV: %f %f\n",
-			interaction.uv.x, interaction.uv.y);
+#if PRINT_DEBUG>=3
+	if(ctx->selectedByCursor) {
+		printf("Normal: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+			ctx->interaction.n.x, ctx->interaction.n.y, ctx->interaction.n.z);
+		printf("DPDU: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+			ctx->interaction.dpdu.x, ctx->interaction.dpdu.y, ctx->interaction.dpdu.z);
+		printf("DPDV: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+			ctx->interaction.dpdv.x, ctx->interaction.dpdv.y, ctx->interaction.dpdv.z);
+		printf("Hit: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+			ctx->interaction.p.x, ctx->interaction.p.y, ctx->interaction.p.z);
+		printf("UV: " FLOAT_FMT " " FLOAT_FMT "\n",
+			ctx->interaction.uv.x, ctx->interaction.uv.y);
 		printf("Normal map: %d %d\n",
-			interaction.m.normal_map.width, interaction.m.normal_map.height);
-		printf("Time : %f\n",
-			interaction.time);
+			ctx->interaction.m.normal_map.width, ctx->interaction.m.normal_map.height);
+		printf("Time : " FLOAT_FMT "\n",
+			ctx->interaction.time);
 	}
 #endif
 
-	if(ctx->host_ctx->selected_triangle == interaction.triangle_id)
+	if(ctx->selected_triangle == ctx->interaction.triangle_id)
 		return 1.;
 	else
-		return fabs(vec3_dot(ray.direction, interaction.n));
+		return fabs(vec3_dot(ray.direction, n));
 }
 
 
-int compute_ray(Ray ray, Context *ctx, PathElement *path)
+int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_depth_before_roulette)
 {
 	vec3 wi, wo;
 	int depth;
 	Transform worldObject;
 	SurfaceInteraction interaction;
 
+	bool addLastPoint;
 	int i, j;
-    double weight;
-	double x, y, z;
-	double rrFactor;
-	double rrStopProbability;
+    Float weight;
+	Float x, y, z;
+	Float rrFactor;
+	Float rrStopProbability;
 
-    weight = 1;
+    weight = w0;
 
 	path[0] = (PathElement){
 		.p = ray.origin,
-		.weight = 1
+		.weight = w0,
+		.normalReversed = false,
+        .triangle_id = -1
 	};
 
+	addLastPoint = true;
 	for(depth = 0; weight > 0 && depth < MAX_DEPTH; depth ++) {
 		rrFactor = 1.0;
-		if(depth > MAX_DEPTH_BEFORE_ROULETTE) {
+		if(depth > max_depth_before_roulette) {
 			rrStopProbability = 0.9;
-			double d = randDouble(ctx);
+			Float d = randFloat(ctx);
             if(d <= rrStopProbability) {
-#ifdef PRINT_DEBUG
-				if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
-					printf("Roulette decided: %f\n", d);
+#if PRINT_DEBUG>=3
+				if(ctx->selectedByCursor)
+					printf("Roulette decided: " FLOAT_FMT "\n", d);
 #endif
 				break;
 			}
 			rrFactor = 1.0 / (1.0 - rrStopProbability);
 		}
 
-#ifdef PRINT_DEBUG
-		if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y) {
+#if PRINT_DEBUG>=3
+		if(ctx->selectedByCursor) {
 			printf("Depth: %d\n", depth);
-			printf("Wi: %f %f %f\n",
+			printf("Wi: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				ray.direction.x, ray.direction.y, ray.direction.z);
-			printf("Origin: %f %f %f\n",
+			printf("Origin: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				ray.origin.x, ray.origin.y, ray.origin.z);
 		}
 #endif
 
 		if(!traverseScene(ray, ctx)) {
-#ifdef PRINT_DEBUG
-			if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
+#if PRINT_DEBUG>=3
+			if(ctx->selectedByCursor)
 				printf("Out !\n");
 #endif
+			addLastPoint = false;
 			break;
 		}
 
-		ctx->interaction.n = vec3_normalize(ctx->interaction.n);
-		ctx->interaction.dpdu = vec3_normalize(ctx->interaction.dpdu);
-		ctx->interaction.dpdv = vec3_normalize(ctx->interaction.dpdv);
 		interaction = ctx->interaction;
+		if(vec3_dot(ray.direction, ctx->interaction.n) < 0) {
+			interaction.n *= -1;
+			interaction.dpdu *= -1;
+		}
+
+		interaction.n    = vec3_normalize(interaction.n);
+		interaction.dpdu = vec3_normalize(interaction.dpdu);
+		interaction.dpdv = vec3_normalize(interaction.dpdv);
 /*
 		if(interaction.m.normal_map.width > 0 && interaction.m.normal_map.height > 0) {
 			i = interaction.uv.x * interaction.m.normal_map.width;
 			j = interaction.uv.y * interaction.m.normal_map.height;
 
-			x = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 0] / 255.;
-			y = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 1] / 255.;
-			z = (double) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 2] / 255.;
+			x = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 0] / 255.;
+			y = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 1] / 255.;
+			z = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 2] / 255.;
 			interaction.n    = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
 			interaction.dpdu += interaction.n - ctx->interaction.n;
 			interaction.dpdv += interaction.n - ctx->interaction.n;
@@ -573,68 +634,70 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path)
 		wo = material_sampleWo(&interaction.m, wi, ctx);
 		
 		if(wo.x == 0 && wo.y == 0 && wo.z == 0) {
-#ifdef PRINT_DEBUG
-			if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y)
+#if PRINT_DEBUG>=3
+			if(ctx->selectedByCursor)
 				printf("No more WO !\n");
 #endif
-			return 0;
+			break;
 		}
 		
-		weight *= fabs(wo.z);
-		weight *= material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda);
-		weight /= material_p_Wo(&interaction.m, wi, wo, ctx);
+		weight = weight
+			* fabs(wo.z)
+			* material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda);
+			/ material_pdf_Wo(&interaction.m, wi, wo, ctx)
+			;
 
-#ifdef PRINT_DEBUG
-		if(ctx->on_screen_pos.x == ctx->host_ctx->mouse_pos.x && ctx->on_screen_pos.y == ctx->host_ctx->mouse_pos.y) {
-			printf("Normal: %f %f %f\n",
+#if PRINT_DEBUG>=3
+		if(ctx->selectedByCursor) {
+			printf("Normal: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.n.x, interaction.n.y, interaction.n.z);
-			printf("DPDU: %f %f %f\n",
+			printf("DPDU: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.dpdu.x, interaction.dpdu.y, interaction.dpdu.z);
-			printf("DPDV: %f %f %f\n",
+			printf("DPDV: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.dpdv.x, interaction.dpdv.y, interaction.dpdv.z);
-			printf("Hit: %f %f %f\n",
+			printf("Hit: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.p.x, interaction.p.y, interaction.p.z);
-			printf("Wi: %f %f %f\n",
+			printf("Wi: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				wi.x, wi.y, wi.z);
-			printf("Wo: %f %f %f\n",
+			printf("Wo: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
 				wo.x, wo.y, wo.z);
-			printf("UV: %f %f\n",
+			printf("UV: " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.uv.x, interaction.uv.y);
-			printf("BRDF: %f\n", material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda));
-			printf("Time : %f\nWeight : %f\nTriangle : %d\n",
+			printf("BRDF: " FLOAT_FMT "\n", material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda));
+			printf("Time : " FLOAT_FMT "\nWeight : " FLOAT_FMT "\nTriangle : %d\n",
 				interaction.time, weight, interaction.triangle_id);
 		}
 #endif
 
-		// Update the path
 		path[depth+1] = (PathElement){
 			.p = interaction.p,
-			.weight = weight
+			.weight = weight,
+			.normalReversed = vec3_dot(ray.direction, ctx->interaction.n) < 0,
+            .triangle_id = interaction.triangle_id
 		};
 
-		// Compute the ray's next step
+		// Calcul du rayon de la prochaine étape
 		ray.origin = interaction.p;
 		ray.max_t = ctx->host_ctx->camera.max_t;
-
 		ray.direction = vec3_normalize(transform_apply_vector(wo, worldObject));
 	}
 
-    return depth+1;
+	return depth+1;
 }
 
 kernel void compute_pixel(
 	__constant Material *materials,
 	__constant vec3 *vertices,
-	__constant double2 *uv,
+	__constant vec2 *uv,
 	__constant Triangle *tris,
 	__constant BVHNode *bvh_nodes,
-	__global HostContext *host_ctx,
+	__constant HostContext *host_ctx,
+	__global int *selected_triangle,
 	__constant unsigned char *maps,
 	__constant Light *lights,
-	__global double *raw,
-	__global uint *sampleCountMap,
+	__global Float *raw,
 	__write_only image2d_t output,
-	__global double *surface_irradiance
+	__global Float *surface_irradiance
 )
 {
 	int i, j;
@@ -651,6 +714,11 @@ kernel void compute_pixel(
 		.maps = maps,
 		.lights = lights,
 		.on_screen_pos = on_screen_pos,
+		.selected_triangle = *selected_triangle,
+		.selected_triangle_ptr = selected_triangle,
+		.selectedByCursor =
+			on_screen_pos.x == host_ctx->mouse_pos.x &&
+			on_screen_pos.y == host_ctx->mouse_pos.y,
 		.state =
 			host_ctx->seed + on_screen_pos.x * on_screen_pos.y
 	};
@@ -658,91 +726,131 @@ kernel void compute_pixel(
 	if(ctx.state % 2 == 0)
 		ctx.state ++;
 
-	double2 normalized_screen_pos = (double2) (
-		((double) (2 * on_screen_pos.x) / (double) host_ctx->camera.viewport.x) - 1.0f,
-		((double) (2 * on_screen_pos.y) / (double) host_ctx->camera.viewport.y) - 1.0f
+	vec2 normalized_screen_pos = (vec2) (
+		((Float) (2 * on_screen_pos.x) / (Float) host_ctx->camera.viewport.x) - 1.0f,
+		((Float) (2 * on_screen_pos.y) / (Float) host_ctx->camera.viewport.y) - 1.0f
 	);
-	double l = tan(host_ctx->camera.fov) * host_ctx->camera.near;
+	Float l = tan(host_ctx->camera.fov) * host_ctx->camera.near;
 	vec3 tmp = (vec3)(
 		normalized_screen_pos.x * l,
 		normalized_screen_pos.y * l,
 		host_ctx->camera.near
 	);
+	tmp = transform_apply_vector(tmp, host_ctx->camera.rotation_transform);
 	Ray ray = (Ray){
 		.origin = tmp + host_ctx->camera.pos,
-		.direction = vec3_normalize(transform_apply_vector(tmp, host_ctx->camera.rotation_transform)),
+		.direction = vec3_normalize(tmp),
 		.min_t = 1e-5,
 		.max_t = host_ctx->camera.max_t
 	};
 	
-	const int index = on_screen_pos.x + host_ctx->camera.viewport.x * on_screen_pos.y;
-	double grayscale;
+	const int index = on_screen_pos.y + host_ctx->camera.viewport.y * on_screen_pos.x;
+	Float grayscale;
 
 	if(ctx.host_ctx->simpleView) {
 		for(i = 0; i < host_ctx->scene_meta.lights_count; i ++)
-			if(interactionRaySphere(ray, ctx.lights[i].pos, 1e-1))
+			if(interactionRayLight(ray, ctx.lights[i]))
 				break;
 		if(i != host_ctx->scene_meta.lights_count) {
-			raw[index] = 0;
-			grayscale = 255;
-		} else {
-			raw[index] = compute_simple_ray(ray, &ctx);
-			grayscale = 127 * raw[index];
-		}
+			// On colorie la face en noir si elle ne nous fait pas face
+			if(ctx.lights[i].type == LIGHT_AREA && vec3_dot(ray.direction, ctx.lights[i].area_n) < 0)
+				grayscale = 0;
+			else
+				grayscale = 255;
+		} else
+			grayscale = 127 * compute_simple_ray(ray, &ctx);
+		write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
 	} else {
 		int cam_path_length = 0;
 		int light_path_length = 0;
 		PathElement cam_path[MAX_DEPTH];
 		PathElement light_path[MAX_DEPTH];
 		
-		if(sampleCountMap[index] == 0)
-			raw[index] = 0;	
-		
-		cam_path_length = compute_ray(ray, &ctx, cam_path);
+#if PRINT_DEBUG>=2
+		if(ctx.selectedByCursor)
+			printf("Computing camera's path\n");
+#endif
+		cam_path_length = compute_ray(ray, &ctx, cam_path, 1, 1);
 
-		int light_id = randDouble(&ctx) * host_ctx->scene_meta.lights_count;
-		light_path_length = compute_ray(getRayFromLightSource(&ctx, light_id), &ctx, light_path);
 
-		double tmp;
-		if(light_path_length >= 1) {
-			tmp = vec3_dist_2(light_path[1].p, light_path[0].p);
-			for(j = 1; j < light_path_length; j ++)
-				light_path[i].weight /= tmp;
-		}
+#if PRINT_DEBUG>=2
+		if(ctx.selectedByCursor)
+			printf("Computing light's path\n");
+#endif
+		int light_id = randFloat(&ctx) * host_ctx->scene_meta.lights_count;
+		light_path_length = compute_ray(getRayFromLightSource(&ctx, light_id), &ctx, light_path, light_pdf(&ctx, light_id) / host_ctx->scene_meta.lights_count, 1);
 
-		for(i = 0; i < cam_path_length; i ++) {
+		Float tmp, totalVal;
+
+		int depth;
+		int samplingCount = 0;
+		totalVal = 0;
+        vec3 dist, wo, wi;
+		for(i = 1; i < cam_path_length; i ++) {
 			for(j = 0; j < light_path_length; j ++) {
+				depth = i + j - 2;
+				if((i == 1 && j == 1) || depth < 0 || depth > MAX_DEPTH)
+					continue;
+
+			    samplingCount ++;
+
+                dist = light_path[j].p - cam_path[i].p;
+                wo = vec3_normalize(dist);
 				ray = (Ray) {
 					.origin = cam_path[i].p,
-					.direction = light_path[j].p - cam_path[i].p,
-					.max_t = 1e10,		//NOTE: Purement arbitraire
-					.min_t = 1e-4
+					.direction = wo,
+					.max_t = vec3_norm(dist),       //On ne va pas plus loin que les 2 points
+                    .min_t = RAY_EPSILON            		//NOTE: Purement arbitraire
 				};
 
-				tmp = 0;
+                wi = vec3_normalize(cam_path[i].p - cam_path[i-1].p);
+                
+                // TODO: wi et wo dans le plan normal
+
+				tmp = -1;
+                Material mat = ctx.materials[ctx.tris[cam_path[i].triangle_id].material];
 				if(!traverseScene(ray, &ctx))
 					tmp = light_path[j].weight *
 						cam_path[i].weight *
+                        material_computeBRDF(&mat, wi, wo, ctx.host_ctx->lambda) *                        
 						lights[light_id].I;
-				
-				if(j == 0)
-					tmp /= vec3_dist_2(cam_path[i].p, light_path[j].p);
-
-				raw[index] += tmp;
+#if PRINT_DEBUG>=3
+				if(ctx.selectedByCursor) {
+					printf("Output between %d (" FLOAT_FMT ";" FLOAT_FMT ";" FLOAT_FMT ") and %d (" FLOAT_FMT ";" FLOAT_FMT ";" FLOAT_FMT "): " FLOAT_FMT ";",
+                           i, cam_path[i].p.x, cam_path[i].p.y, cam_path[i].p.z,
+                           j, light_path[j].p.x, light_path[j].p.y, light_path[j].p.z,
+                           tmp);
+                    if(tmp == -1)
+                        printf("Obstructed by triangle %d, time: " FLOAT_FMT "\n", ctx.interaction.triangle_id, ctx.interaction.time);
+                    else
+                        printf("\n");
+                }
+#endif
+				if(tmp > 0) {
+					totalVal += tmp;
+                }
 			}
 		}
+		if(host_ctx->sampleCount == 1)
+			raw[index] = 0;
+		if(samplingCount > 0)
+			raw[index] += totalVal / samplingCount;
 
-		sampleCountMap[index] += cam_path_length * light_path_length;
-
-#ifdef PRINT_DEBUG
-		if(ctx.on_screen_pos.x == ctx.host_ctx->mouse_pos.x && ctx.on_screen_pos.y == ctx.host_ctx->mouse_pos.y) {
-			printf("Seed: %d; Mean weight : %f; Light's path's length: %d; Camera's path's length: %d\n",
-				host_ctx->seed,raw[index] / sampleCountMap[index], cam_path_length, light_path_length);
-		}
+#if PRINT_DEBUG>=1
+		if(ctx.selectedByCursor)
+			printf("Mean weight : " FLOAT_FMT "; Light's path's length: %d; Camera's path's length: %d; Selected triangle: %d\n",
+				raw[index] / host_ctx->sampleCount, cam_path_length, light_path_length, ctx.selected_triangle);
 #endif
-		grayscale = 127 * raw[index] / sampleCountMap[index];
-	}
 
-	write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
+		tmp = raw[index] / host_ctx->sampleCount;
+		if(tmp > host_ctx->max_threshold)
+			write_imagei(output, on_screen_pos, INT4(255, 0, 0, 0));
+		else if(tmp < 0)
+			write_imagei(output, on_screen_pos, INT4(0, 255, 0, 0));
+		else {
+			grayscale = 127 * tmp;
+			write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
+		} 
+	}
 }
 

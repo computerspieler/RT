@@ -38,7 +38,7 @@ vec3 vec3_div(vec3 v1, vec3 v2)
 	return v1;
 }
 
-double vec3_dot(vec3 v1, vec3 v2)
+Float vec3_dot(vec3 v1, vec3 v2)
 {
 	return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
 }
@@ -54,7 +54,7 @@ vec3 vec3_cross(vec3 v1, vec3 v2)
 	return o;
 }
 
-vec3 vec3_smul(double a, vec3 v)
+vec3 vec3_smul(Float a, vec3 v)
 {
 	v.x *= a;
 	v.y *= a;
@@ -63,7 +63,7 @@ vec3 vec3_smul(double a, vec3 v)
 	return v;
 }
 
-vec3 vec3_sadd(double a, vec3 v)
+vec3 vec3_sadd(Float a, vec3 v)
 {
 	v.x += a;
 	v.y += a;
@@ -81,20 +81,20 @@ vec3 vec3_sqrt(vec3 v)
 	return v;
 }
 
-double vec3_norm_2(vec3 v)
+Float vec3_norm_2(vec3 v)
 {
 	return v.x * v.x + v.y * v.y + v.z * v.z;
 }
 
-double vec3_norm(vec3 v)
+Float vec3_norm(vec3 v)
 {
 	return sqrt(vec3_norm_2(v));
 }
 
 vec3 vec3_normalize(vec3 v)
 {
-	double invNorm;
-	double norm2 = vec3_norm_2(v);
+	Float invNorm;
+	Float norm2 = vec3_norm_2(v);
 
 	if(norm2 == 0)
 		v.x = v.y = v.z = 0;
@@ -112,13 +112,13 @@ void vec3_build_coordonate_system(vec3 v1, vec3 *v2, vec3 *v3)
 {
 	// TODO: Etudier
 	if(fabs(v1.x) > fabs(v1.y)) {
-		double invLen = 1. / sqrt(v1.x * v1.x + v1.z * v1.z);
+		Float invLen = 1. / sqrt(v1.x * v1.x + v1.z * v1.z);
 		v2->x = -v1.z * invLen;
 		v2->y = 0;
 		v2->z = v1.x * invLen;
 	}
 	else {
-		double invLen = 1. / sqrt(v1.y * v1.y + v1.z * v1.z);
+		Float invLen = 1. / sqrt(v1.y * v1.y + v1.z * v1.z);
 		v2->x = 0;
 		v2->y = v1.z * invLen;
 		v2->z = -v1.y * invLen;
@@ -157,12 +157,12 @@ vec3 vec3_max(vec3 v1, vec3 v2)
 	return o;
 }
 
-double vec3_dist_2(vec3 p1, vec3 p2)
+Float vec3_dist_2(vec3 p1, vec3 p2)
 {
     return vec3_norm_2(vec3_diff(p1, p2));
 }
 
-double vec3_dist(vec3 p1, vec3 p2)
+Float vec3_dist(vec3 p1, vec3 p2)
 {
     return sqrt(vec3_dist_2(p1, p2));
 }

@@ -1,16 +1,20 @@
 COMMON_SRCS=$(wildcard common/*.c)
 SRCS=$(wildcard src/*.c)
 FULL_SRCS=$(SRCS) $(COMMON_SRCS)
-DEPS=bin/deps/kernel/main.cl.d $(patsubst %,bin/deps/%.d,$(FULL_SRCS))
+DEPS=$(patsubst %,bin/deps/%.d,$(FULL_SRCS))
 OBJS=$(patsubst %,bin/objs/%.o,$(FULL_SRCS))
+COMMON_OBJS=$(patsubst %,bin/objs/%.o,$(COMMON_SRCS))
 
-CC=gcc
-CPP=gcc -E
-LD=gcc
+PREFIX=
+CC=$(PREFIX)gcc
+CPP=$(PREFIX)gcc -E
+LD=$(PREFIX)gcc
+SDL_CONFIG=$(PREFIX)sdl-config
 CCFLAGS=-Wall -Wextra -Isrc -Ibin/headers -Iinclude -Icommon -c \
-	-Wno-incompatible-pointer-types
-CPPFLAGS=-Iinclude -P -nostdinc -D IN_OPENCL -D PRINT_DEBUG -fdirectives-only
-LDFLAGS=-lm `sdl-config --cflags --libs` -lOpenCL
+	-Wno-incompatible-pointer-types `$(SDL_CONFIG) --cflags`
+CPPFLAGS=-Iinclude -P -nostdinc -D IN_OPENCL -fdirectives-only \
+	`$(SDL_CONFIG) --cflags`
+LDFLAGS=-lm `$(SDL_CONFIG) --libs` -lOpenCL
 
 all: debug
 
@@ -22,24 +26,26 @@ clean:
 debug: bin/debug
 release: bin/release
 
-bin/debug: CCFLAGS := $(CCFLAGS) -g -ggdb
-bin/debug: LDFLAGS := $(LDFLAGS) -g -ggdb
+bin/debug: CCFLAGS  := $(CCFLAGS)  -g -ggdb
+bin/debug: LDFLAGS  := $(LDFLAGS)  -g -ggdb
+bin/debug: CPPFLAGS := $(CPPFLAGS) -D PRINT_DEBUG=3
 bin/debug: bin/headers/kernel/main.cl.h $(OBJS)
 	$(LD) -o $@ $(OBJS) $(LDFLAGS)
 
-bin/release: CCFLAGS := $(CCFLAGS) -O3
-bin/release: LDFLAGS := $(LDFLAGS) -O3
+bin/release: CCFLAGS  := $(CCFLAGS)  -O3
+bin/release: LDFLAGS  := $(LDFLAGS)  -O3
+bin/release: CPPFLAGS := $(CPPFLAGS) -D PRINT_DEBUG=0
 bin/release: bin/headers/kernel/main.cl.h $(OBJS)
 	$(LD) -o $@ $(OBJS) $(LDFLAGS)
 
-bin/headers/%.cl.h: %.cl
+bin/headers/%.cl.h: %.cl $(COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	
 	echo "char $(subst .,_,$(subst /,_,$<))_src[] = " > $@
 	cat $< $(COMMON_SRCS) | $(CPP) $(CPPFLAGS) - | sed 's/\\/\\\\/g' | sed 's/\"/\\\"/g' | sed -e 's/\(.*\)/"\1\\n"/' >> $@
 	echo ";" >> $@
 
-bin/deps/%.cl.d: %.cl
+bin/deps/%.cl.d: %.cl $(COMMON_OBJS)
 	@mkdir -p $(dir $@)
 	$(CPP) $(CPPFLAGS) -M -o $@ $< -MT $(patsubst bin/deps/%.d,bin/headers/%.h,$@)
 

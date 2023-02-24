@@ -7,9 +7,8 @@
 typedef union Matrix4x4 Matrix4x4;
 union Matrix4x4
 {
-    double16 f;
-    double s[16];
-    double v4[4][4];
+    Float s[16];
+    Float v4[4][4];
 };
 
 void matrix_print (Matrix4x4 m);

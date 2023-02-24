@@ -1,6 +1,10 @@
 #ifndef _TYPEDEF_H_
 #define _TYPEDEF_H_
 
+typedef float Float;
+#define FLOAT_FMT "%f"
+typedef unsigned int uint;
+
 #ifndef IN_OPENCL
 
 #include <CL/cl.h>
@@ -20,6 +24,11 @@ typedef cl_double4 double4;
 typedef cl_double3 double3;
 typedef cl_double2 double2;
 
+typedef cl_float16 float16;
+typedef cl_float4  float4;
+typedef cl_float3  float3;
+typedef cl_float2  float2;
+
 typedef cl_int4 int4;
 typedef cl_int3 int3;
 typedef cl_int2 int2;
@@ -28,16 +37,18 @@ typedef cl_uint4 uint4;
 typedef cl_uint3 uint3;
 typedef cl_uint2 uint2;
 
-double rsqrt(double x);
-
 #define INT4(_x, _y, _z, _w)    (int4)   {.x = (int)(_x),    .y = (int)(_y),    .z = (int)(_z),   .w = (int)(_w)}
 #define INT2(_x, _y)            (int2)   {.x = (int)(_x),    .y = (int)(_y)}
 #define INT3(_x, _y, _z)        (int3)   {.x = (int)(_x),    .y = (int)(_y),    .z = (int)(_y)}
 #define UINT3(_x, _y, _z)       (uint3)  {.x = (uint)(_x),   .y = (uint)(_y),   .z = (uint)(_z)}
 #define UINT2(_x, _y)           (uint2)  {.x = (uint)(_x),   .y = (uint)(_y)}
-#define DOUBLE2(_x, _y)         (double2){.x = (double)(_x), .y = (double)(_y)}
-#define DOUBLE3(_x, _y, _z)     (double3){.x = (double)(_x), .y = (double)(_y), .z = (double)(_z)}
+#define DOUBLE2(_x, _y)         (double2){.x = (float)(_x),  .y = (float)(_y)}
+#define DOUBLE3(_x, _y, _z)     (double3){.x = (float)(_x),  .y = (float)(_y),  .z = (float)(_z)}
+#define FLOAT2(_x, _y)          (float2) {.x = (float)(_x),  .y = (float)(_y)}
+#define FLOAT3(_x, _y, _z)      (float3) {.x = (float)(_x),  .y = (float)(_y),  .z = (float)(_z)}
 #define FLOAT4(_x, _y, _z, _w)  (float4) {.x = (float)(_x),  .y = (float)(_y),  .z = (float)(_z), .w = (float)(_w)}
+
+Float rsqrt(Float x);
 
 #else
 
@@ -48,11 +59,15 @@ double rsqrt(double x);
 #define INT4(_x, _y, _z, _w)    (int4)   ((_x), (_y), (_z), (_w))
 #define DOUBLE2(_x, _y)         (double2)((_x), (_y))
 #define DOUBLE3(_x, _y, _z)     (double3)((_x), (_y), (_z))
+#define FLOAT2(_x, _y)          (float2) ((_x), (_y))
+#define FLOAT3(_x, _y, _z)      (float3) ((_x), (_y), (_z))
 #define FLOAT4(_x, _y, _z, _w)  (float4) ((_x), (_y), (_z), (_w))
 
 #endif
 
-#define VEC3(_x, _y, _z)        DOUBLE3(_x, _y, _z)
-typedef double3 vec3;
+#define VEC3(_x, _y, _z)        FLOAT3(_x, _y, _z)
+typedef float3 vec3;
+#define VEC2(_x, _y)        	FLOAT2(_x, _y)
+typedef float2 vec2;
 
 #endif

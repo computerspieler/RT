@@ -12,8 +12,9 @@ struct HostContext
     SceneMetadata scene_meta;
     uint seed;
     int lambda;
+	uint sampleCount;
 	bool simpleView;
-	uint selected_triangle;
+	Float max_threshold;
 };
 
 

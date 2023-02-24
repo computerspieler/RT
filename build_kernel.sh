@@ -1,4 +1,6 @@
 #!/bin/bash
 
-make &&
-gdb --args ./bin/debug scene/Room.obj
+make debug &&
+gdb --args ./bin/debug scene/plane.obj
+#scene/Internat.obj
+#scene/bidirectional_rt.obj

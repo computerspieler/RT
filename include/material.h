@@ -10,7 +10,6 @@ enum MaterialType
 {
     MATERIAL_NONE = 0,
     MATERIAL_LAMBERTIAN = 1,
-    MATERIAL_OREN_NAYAR = 2,
     MATERIAL_MIRROR = 3,
     MATERIAL_GLASS = 4,
 };
@@ -18,32 +17,32 @@ enum MaterialType
 typedef struct MaterialLambertian MaterialLambertian;
 struct MaterialLambertian
 {
-    double rho;
+    Float R;
 };
 
 typedef struct MaterialOren_Nayar MaterialOren_Nayar;
 struct MaterialOren_Nayar
 {
-    double sigma;
-    double R;
+    Float sigma;
+    Float R;
 };
 
 typedef struct MaterialGlass MaterialGlass;
 struct MaterialGlass
 {
-    double IOR;
+    Float IOR;
 };
 
 typedef struct MaterialComplex MaterialComplex;
 struct MaterialComplex
 {
     vec3 specular_color;
-    double specular_roughness;
-    double specular_IOR;
-    double metalness;
-    double transmission;
+    Float specular_roughness;
+    Float specular_IOR;
+    Float metalness;
+    Float transmission;
     vec3 transmission_color;
-    double transmission_dispersion;
+    Float transmission_dispersion;
 };
 
 typedef struct Material Material;

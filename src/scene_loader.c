@@ -22,19 +22,19 @@ int readSpectrum(FILE *f, Spectrum *out)
 {
     //FILE *fs;
     //char *delim = " ";
-    double constant;
+    Float constant;
     char buffer[1024];
 
     fscanf(f, "%s", buffer);
 
     if(strcmp(buffer, "constant") == 0) {
-        fscanf(f, "%lf\n", &constant);
+        fscanf(f, FLOAT_FMT "\n", &constant);
         for(int i = 0; i < SPECTRUM_SIZE; i ++)
             (*out)[i] = constant;
     }
     /*
     else if(strcmp(buffer, "rgb") == 0)
-        fscanf(f, "%lf %lf %lf\n",
+        fscanf(f, FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             &out->x, &out->y, &out->z);
     */
     else if(strcmp(buffer, "file") == 0) {
@@ -46,7 +46,7 @@ int readSpectrum(FILE *f, Spectrum *out)
         }
 
         for(int i = 0; i < SPECTRUM_SIZE; i ++)
-            fscanf(f, "%lf\n", &((*out)[i]));
+            fscanf(f, FLOAT_FMT "\n", &((*out)[i]));
 
         fclose(f);
     }
@@ -74,7 +74,7 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
                 array_push(materials, &mat);
             
             mat = (Material) {0};
-            fscanf(f, "%s %d\n", buffer, &mat.type);
+            fscanf(f, "%s %d\n", buffer, (int*) &mat.type);
             str_length = strlen(buffer);
             name = calloc(str_length + 1, sizeof(char));
             memcpy(name, buffer, str_length * sizeof(char));
@@ -132,20 +132,13 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
             switch(mat.type) {
                 case MATERIAL_NONE: break;
                 case MATERIAL_LAMBERTIAN:
-                    if(strcmp(buffer, "rho") == 0)
-                        fscanf(f, "%lf\n", &mat.l.rho);
-                    break;
-                
-                case MATERIAL_OREN_NAYAR:
-                    if(strcmp(buffer, "sigma") == 0)
-                        fscanf(f, "%lf\n", &mat.on.sigma);
-                    else if(strcmp(buffer, "R") == 0)
-                        fscanf(f, "%lf\n", &mat.on.R);
+                    if(strcmp(buffer, "R") == 0)
+                        fscanf(f, FLOAT_FMT "\n", &mat.l.R);
                     break;
                 
                 case MATERIAL_GLASS:
                     if(strcmp(buffer, "IOR") == 0)
-                        fscanf(f, "%lf\n", &mat.g.IOR);
+                        fscanf(f, FLOAT_FMT "\n", &mat.g.IOR);
                     break;
 
                 default:
@@ -157,22 +150,22 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
                     else */
                     
                     if(strcmp(buffer, "Sr") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.specular_roughness);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.specular_roughness);
                     }
                     else if(strcmp(buffer, "SIOR") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.specular_IOR);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.specular_IOR);
                     }
                     else if(strcmp(buffer, "M") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.metalness);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.metalness);
                     }
                     else if(strcmp(buffer, "M") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.metalness);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.metalness);
                     }
                     else if(strcmp(buffer, "T") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.transmission);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.transmission);
                     }
                     else if(strcmp(buffer, "Td") == 0) {
-                        fscanf(f, "%lf\n", &mat.c.transmission_dispersion);
+                        fscanf(f, FLOAT_FMT "\n", &mat.c.transmission_dispersion);
                     }
                     break;
             }
@@ -190,7 +183,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     FILE *fm;
     vec3 vertex;
 	Light light;
-    double2 vertex_uv;
+    vec2 vertex_uv;
     Triangle triangle;
 
     int res;
@@ -205,7 +198,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     assert(metadata);
 
     vertices = array_create(sizeof(vec3));
-    tex = array_create(sizeof(double2));
+    tex = array_create(sizeof(vec2));
     groups = array_create(sizeof(char*));
     triangles = array_create(sizeof(Triangle));
     materials = array_create(sizeof(Material));
@@ -227,13 +220,13 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             break;
 
         if(strcmp(buffer, "v") == 0) {
-            fscanf(f, "%lf %lf %lf\n", &vertex.x, &vertex.y, &vertex.z);
+            fscanf(f, FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n", &vertex.x, &vertex.y, &vertex.z);
             array_push(&vertices, &vertex);
         } else if(strcmp(buffer, "vt") == 0) {
-            fscanf(f, "%lf %lf\n", &vertex_uv.x, &vertex_uv.y);
+            fscanf(f, FLOAT_FMT " " FLOAT_FMT "\n", &vertex_uv.x, &vertex_uv.y);
             array_push(&tex, &vertex_uv);
         } else if(strcmp(buffer, "f") == 0) {
-            res = fscanf(f, "%d/%d %d/%d %d/%d\n",
+            res = fscanf(f, "%ld/%ld %ld/%ld %ld/%ld\n",
                 &triangle.vertices[0], &triangle.uv[0],
                 &triangle.vertices[1], &triangle.uv[1],
                 &triangle.vertices[2], &triangle.uv[2]);
@@ -286,8 +279,22 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             if(res)
                 goto err;
         } else if(strcmp(buffer, "lp") == 0) {
-            fscanf(f, "%lf %lf %lf %lf\n", &light.pos.x, &light.pos.y, &light.pos.z, &light.I);
+            fscanf(f, FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n", &light.pos.x, &light.pos.y, &light.pos.z, &light.I);
             light.type = LIGHT_POINT;
+            array_push(&lights, &light);
+        } else if(strcmp(buffer, "la") == 0) {
+            fscanf(f,
+				FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT " "
+				FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT " "
+				FLOAT_FMT " " FLOAT_FMT " "
+				FLOAT_FMT "\n",
+				&light.pos.x, &light.pos.y, &light.pos.z,
+				&light.area_n.x, &light.area_n.y, &light.area_n.z,
+				&light.area_width, &light.area_height,
+				&light.I);
+            light.type = LIGHT_AREA;
+
+			vec3_build_coordonate_system(light.area_n, &light.area_tan, &light.area_bitan);
             array_push(&lights, &light);
         } else
             while (fgetc(f) != '\n');
@@ -326,28 +333,28 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 		assert(obj->triangles[i].uv[0] >= 0);
 		assert(obj->triangles[i].uv[1] >= 0);
 		assert(obj->triangles[i].uv[2] >= 0);
-		assert(obj->triangles[i].uv[0] < metadata->vertices_tex_count);
-		assert(obj->triangles[i].uv[1] < metadata->vertices_tex_count);
-		assert(obj->triangles[i].uv[2] < metadata->vertices_tex_count);
+		assert(obj->triangles[i].uv[0] < (long int) metadata->vertices_tex_count);
+		assert(obj->triangles[i].uv[1] < (long int) metadata->vertices_tex_count);
+		assert(obj->triangles[i].uv[2] < (long int) metadata->vertices_tex_count);
 
-	    double2 uv0 = obj->vertices_tex[obj->triangles[i].uv[0]];
-	    double2 uv1 = obj->vertices_tex[obj->triangles[i].uv[1]];
-	    double2 uv2 = obj->vertices_tex[obj->triangles[i].uv[2]];
+	    vec2 uv0 = obj->vertices_tex[obj->triangles[i].uv[0]];
+	    vec2 uv1 = obj->vertices_tex[obj->triangles[i].uv[1]];
+	    vec2 uv2 = obj->vertices_tex[obj->triangles[i].uv[2]];
 
         vec3 dp02 = vec3_diff(p0, p2);
         vec3 dp12 = vec3_diff(p1, p2);
 
-        double2 duv02 = DOUBLE2(
+        vec2 duv02 = VEC2(
             uv0.x - uv2.x,
             uv0.y - uv2.y
         );
-        double2 duv12 = DOUBLE2(
+        vec2 duv12 = VEC2(
             uv1.x - uv2.x,
             uv1.y - uv2.y
         );
 
 	    obj->triangles[i].normal = vec3_normalize(vec3_cross(vec3_diff(p2, p0), vec3_diff(p1, p0)));
-        double det = duv02.x * duv12.y - duv02.y * duv12.x;
+        Float det = duv02.x * duv12.y - duv02.y * duv12.x;
 
         if(det == 0)
             vec3_build_coordonate_system(obj->triangles[i].normal, &obj->triangles[i].dpdu, &obj->triangles[i].dpdv);
@@ -362,36 +369,40 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
         }
 
         printf("=== Triangle id: %zu ===\n", i);
-        printf("Points %d %d %d\n",
+        printf("Points %ld %ld %ld\n",
             obj->triangles[i].vertices[0],
             obj->triangles[i].vertices[1],
             obj->triangles[i].vertices[2]);
-        printf("Point 0 %lf %lf %lf\n",
+        printf("Point 0 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             p0.x, p0.y, p0.z);
-        printf("Point 1 %lf %lf %lf\n",
+        printf("Point 1 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             p1.x, p1.y, p1.z);
-        printf("Point 2 %lf %lf %lf\n",
+        printf("Point 2 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             p2.x, p2.y, p2.z);
-        printf("UV 0 %lf %lf\n",
+        printf("UV 0 " FLOAT_FMT " " FLOAT_FMT "\n",
             uv0.x, uv0.y);
-        printf("UV 1 %lf %lf\n",
+        printf("UV 1 " FLOAT_FMT " " FLOAT_FMT "\n",
             uv1.x, uv1.y);
-        printf("UV 2 %lf %lf\n",
+        printf("UV 2 " FLOAT_FMT " " FLOAT_FMT "\n",
             uv2.x, uv2.y);
-        printf("Det: %lf\n", det);
-        printf("Normal: %lf %lf %lf\n",
+        printf("Det: " FLOAT_FMT "\n", det);
+        printf("Normal: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             obj->triangles[i].normal.x,
             obj->triangles[i].normal.y,
             obj->triangles[i].normal.z);
-        printf("DPDU: %lf %lf %lf\n",
+        printf("DPDU: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             obj->triangles[i].dpdu.x,
             obj->triangles[i].dpdu.y,
             obj->triangles[i].dpdu.z);
-        printf("DPDV: %lf %lf %lf\n",
+        printf("DPDV: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
             obj->triangles[i].dpdv.x,
             obj->triangles[i].dpdv.y,
             obj->triangles[i].dpdv.z);
     }
+
+	printf("==== BVH Tree ====\n");
+	printf("Node count: %d\n", metadata->tree.nodes_count);
+	printf("Tree count: %ld\n", metadata->tree.nodes_count * sizeof(BVHNode));
 
     printf("Scene file sucessfully loaded\n");
 
@@ -431,7 +442,7 @@ int mergeObjects(Scene *obj1, SceneMetadata *obj1_meta, Scene *obj2, SceneMetada
     output->materials = malloc(sizeof(Material) * output_meta->materials_count);
     output->triangles = malloc(sizeof(Triangle) * output_meta->triangles_count);
     output->vertices = malloc(sizeof(vec3) * output_meta->vertices_count);
-    output->vertices_tex = malloc(sizeof(double2) * output_meta->vertices_tex_count);
+    output->vertices_tex = malloc(sizeof(vec2) * output_meta->vertices_tex_count);
     output->vertices_normal = malloc(sizeof(vec3) * output_meta->vertices_normal_count);
     output_meta->groups_name = malloc(sizeof(char*) * output_meta->groups_count);
 
@@ -444,8 +455,8 @@ int mergeObjects(Scene *obj1, SceneMetadata *obj1_meta, Scene *obj2, SceneMetada
     memcpy(output->vertices, obj1->vertices, sizeof(vec3) * obj1_meta->vertices_count);
     memcpy(output->vertices + obj1_meta->vertices_count, obj2->vertices, sizeof(vec3) * obj2_meta->vertices_count);
 
-    memcpy(output->vertices_tex, obj1->vertices_tex, sizeof(double2) * obj1_meta->vertices_tex_count);
-    memcpy(output->vertices_tex + obj1_meta->vertices_tex_count, obj2->vertices_tex, sizeof(double2) * obj2_meta->vertices_tex_count);
+    memcpy(output->vertices_tex, obj1->vertices_tex, sizeof(vec2) * obj1_meta->vertices_tex_count);
+    memcpy(output->vertices_tex + obj1_meta->vertices_tex_count, obj2->vertices_tex, sizeof(vec2) * obj2_meta->vertices_tex_count);
 
     memcpy(output->triangles, obj1->triangles, sizeof(Triangle) * obj1_meta->triangles_count);
     for(size_t i = 0; i < obj2_meta->triangles_count; i++)
@@ -555,7 +566,7 @@ int buildBVHTreeSAH(Scene obj, SceneMetadata *scene_meta, Array *nodes, Primitiv
     }
 
     // Compute the cost
-    double cost[BUCKET_COUNT - 1];
+    Float cost[BUCKET_COUNT - 1];
     int count0[BUCKET_COUNT - 1];
     for(int i = 0; i < BUCKET_COUNT - 1; i ++) {
         BBox3 b0, b1;
@@ -591,7 +602,7 @@ int buildBVHTreeSAH(Scene obj, SceneMetadata *scene_meta, Array *nodes, Primitiv
         }
 
         if(init0 && init1)
-            cost[i] = 0.125 + (double) (count0[i] * bbox_surface_area(b0) + count1 * bbox_surface_area(b1)) / bbox_surface_area(bounds);
+            cost[i] = 0.125 + (Float) (count0[i] * bbox_surface_area(b0) + count1 * bbox_surface_area(b1)) / bbox_surface_area(bounds);
         else
             cost[i] = +INFINITY;
     }
@@ -703,12 +714,12 @@ void printBVHTree(BVHNode* tree, int node, int depth)
     for(int i = 0; i < depth; i ++)
         putchar(' ');
 
-    printf("ID: %d; Bounds: [Min: %lf %lf %lf; ",
+    printf("ID: %d; Bounds: [Min: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "; ",
         node,
         tree[node].bounds.min.x,
         tree[node].bounds.min.y,
         tree[node].bounds.min.z);
-    printf("Max: %lf %lf %lf]; ",
+    printf("Max: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "]; ",
         tree[node].bounds.max.x,
         tree[node].bounds.max.y,
         tree[node].bounds.max.z);

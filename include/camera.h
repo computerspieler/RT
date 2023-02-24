@@ -11,9 +11,9 @@ struct Camera
     vec3 pos;
     vec3 rot;
 
-    double near;
-    double max_t;
-    double fov;
+    Float near;
+    Float max_t;
+    Float fov;
     int2 viewport;
 
     Transform rotation_transform;

@@ -71,10 +71,10 @@ Transform transform_scale(vec3 scale)
     };
 }
 
-Transform transform_rotate_x(double angle)
+Transform transform_rotate_x(Float angle)
 {
-    double c = cos(angle);
-    double s = sin(angle);
+    Float c = cos(angle);
+    Float s = sin(angle);
 	Transform out;
 
     Matrix4x4 m = {
@@ -91,10 +91,10 @@ Transform transform_rotate_x(double angle)
     return out;
 }
 
-Transform transform_rotate_y(double angle)
+Transform transform_rotate_y(Float angle)
 {
-    double c = cos(angle);
-    double s = sin(angle);
+    Float c = cos(angle);
+    Float s = sin(angle);
 	Transform out;
 
     Matrix4x4 m = {
@@ -111,10 +111,10 @@ Transform transform_rotate_y(double angle)
     return out;
 }
 
-Transform transform_rotate_z(double angle)
+Transform transform_rotate_z(Float angle)
 {
-    double c = cos(angle);
-    double s = sin(angle);
+    Float c = cos(angle);
+    Float s = sin(angle);
 	Transform out;
 
     Matrix4x4 m = {
@@ -131,11 +131,11 @@ Transform transform_rotate_z(double angle)
     return out;
 }
 
-Transform transform_rotate_axis(double angle, vec3 axis)
+Transform transform_rotate_axis(Float angle, vec3 axis)
 {
     vec3 a = vec3_normalize(axis);
-    double c = cos(angle);
-    double s = sin(angle);
+    Float c = cos(angle);
+    Float s = sin(angle);
 	Transform out;
 
     Matrix4x4 m = {0};
@@ -237,7 +237,7 @@ vec3 transform_apply_point(vec3 p, Transform t)
         t.mat.v4[2][2] * p.z +
         t.mat.v4[2][3];
     
-    double w =
+    Float w =
         t.mat.v4[3][0] * p.x +
         t.mat.v4[3][1] * p.y +
         t.mat.v4[3][2] * p.z +
@@ -315,7 +315,7 @@ BBox3 transform_apply_bbox3(BBox3 b, Transform t)
 
 bool transform_swap_handedness(Transform t)
 {
-    double det =
+    Float det =
         t.mat.v4[0][0] * (t.mat.v4[1][1] * t.mat.v4[2][2] - t.mat.v4[1][2] * t.mat.v4[2][1]) -
         t.mat.v4[0][1] * (t.mat.v4[1][0] * t.mat.v4[2][2] - t.mat.v4[1][2] * t.mat.v4[2][0]) +
         t.mat.v4[0][2] * (t.mat.v4[1][0] * t.mat.v4[2][1] - t.mat.v4[1][1] * t.mat.v4[2][0])

@@ -35,7 +35,7 @@ void matrix_print(Matrix4x4 m)
 {
     for(int i = 0; i < 4; i++) {
         for(int j = 0; j < 4; j++)
-            printf("%f,", m.s[j + 4*i]);
+            printf(FLOAT_FMT ",", m.s[j + 4*i]);
         printf("\n");
     }
 }
@@ -43,19 +43,19 @@ void matrix_print(Matrix4x4 m)
 void matrix_swap_rows(Matrix4x4 *m, int i, int j)
 {
     for(int col = 0; col < 4; col++) {
-        double temp = m->s[col + 4*i];
+        Float temp = m->s[col + 4*i];
         m->s[col + 4*i] = m->s[col + 4*j];
         m->s[col + 4*j] = temp;
     }
 }
 
-void matrix_mul_row(Matrix4x4 *m, int row, double coeff)
+void matrix_mul_row(Matrix4x4 *m, int row, Float coeff)
 {
     for(int col = 0; col < 4; col++)
         m->s[col + 4*row] *= coeff;
 }
 
-void matrix_add_row(Matrix4x4 *m, int i, int j, double coeff)
+void matrix_add_row(Matrix4x4 *m, int i, int j, Float coeff)
 {
     for(int col = 0; col < 4; col++)
         m->s[col + 4*i] += coeff * m->s[col + 4*j];
@@ -63,7 +63,7 @@ void matrix_add_row(Matrix4x4 *m, int i, int j, double coeff)
 
 void matrix_inverse(Matrix4x4 *out, Matrix4x4 m)
 {
-    double coeff;
+    Float coeff;
 
     for(int i = 0; i < 4; i++)
     	for(int j = 0; j < 4; j++)
@@ -71,7 +71,7 @@ void matrix_inverse(Matrix4x4 *out, Matrix4x4 m)
 
     for(int col = 0; col < 4; col ++) {
         int row = -1;
-        double max = 0.0f;
+        Float max = 0.0f;
         for(int i = col; i < 4; i ++) {
             if(m.s[col + 4 * i] == 0.0f)
                 continue;

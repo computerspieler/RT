@@ -31,8 +31,6 @@ void array_free(Array* s)
 
 void array_push(Array* s, void* elt_ptr)
 {
-	assert(s->logical_size != -1);
-
 	if(s->logical_size >= s->physical_size)
 	{
 		s->physical_size = 2*s->logical_size;
@@ -43,7 +41,7 @@ void array_push(Array* s, void* elt_ptr)
 	s->logical_size ++;
 }
 
-void array_set(Array* s, int i, void* elt_ptr)
+void array_set(Array* s, size_t i, void* elt_ptr)
 {
 	if(i < 0)
 		return;
@@ -60,7 +58,6 @@ void array_set(Array* s, int i, void* elt_ptr)
 
 void array_pull(Array* s, void* elt_ptr)
 {
-	assert(s->logical_size != -1);
 	assert(!array_isEmpty(s));
 
 	if(elt_ptr)

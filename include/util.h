@@ -1,7 +1,7 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
-void std_coords_to_half_diff_coords(double theta_in, double fi_in, double theta_out, double fi_out,
-    double* theta_half, double* fi_half, double* theta_diff, double* fi_diff);
+void std_coords_to_half_diff_coords(Float theta_in, Float fi_in, Float theta_out, Float fi_out,
+    Float* theta_half, Float* fi_half, Float* theta_diff, Float* fi_diff);
 
 #endif

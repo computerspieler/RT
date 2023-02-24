@@ -2,7 +2,7 @@
 # Material Count: 1
 
 newmtl None 1
-rho 0.5
+R 0.5
 R 2
 Bc rgb 0.162 0.091 0.060
 Sc rgb 0.97 0.979 0.988
@@ -14,7 +14,7 @@ Tc 1 1 1
 Td 0
 
 newmtl Light 1
-rho 0.5
+R 0.5
 R 2
 
 newmtl Glass 4
