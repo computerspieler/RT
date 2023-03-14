@@ -15,7 +15,6 @@
 #include "scene.h"
 #include "spectrum.h"
 #include "tree.h"
-#include "map.h"
 #include "light.h"
 
 int readSpectrum(FILE *f, Spectrum *out)
@@ -54,7 +53,7 @@ int readSpectrum(FILE *f, Spectrum *out)
     return 1;
 }
 
-int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials, Array *maps)
+int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials)
 {
     Material mat;
     bool initialized = false;
@@ -85,49 +84,6 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
             if(!initialized)
                 initialized = true;
         }
-		else if(strcmp(buffer, "norm") == 0) {
-			fscanf(f, "%s\n", buffer);
-			FILE *fn = fopen(buffer, "r");
-			if(!fn) {
-				perror("fopen (loadFromMtl)");
-				return 0;
-			}
-
-			// Note: Inadapté dans un cas général
-			// Mais c'est suffisant pour un TIPE
-			int width, height, rgb_comp;
-			
-			if(fscanf(fn, "P6\n%d %d\n%d", &width, &height, &rgb_comp) != 3) {
-				printf("Invalid header\n");
-				fclose(fn);
-				return 0;
-			}
-
-			if(rgb_comp != 255) {
-				printf("Requires an 8 bit component\n");
-				fclose(fn);
-				return 0;
-			}
-
-			while (fgetc(fn) != '\n');
-
-			unsigned char c;
-
-			mat.normal_map = (Map) {
-				.width = width,
-				.height = height,
-				.start = array_size(maps)
-			};
-
-			for(int i = 0; i < height; i ++)
-				for(int j = 0; j < width; j ++) {
-					c = fgetc(fn); array_push(maps, &c);
-					c = fgetc(fn); array_push(maps, &c);
-					c = fgetc(fn); array_push(maps, &c);
-				}
-
-			fclose(fn);
-		}
         else {
             switch(mat.type) {
                 case MATERIAL_NONE: break;
@@ -191,7 +147,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     char *name;
     uint current_material = -1;
     uint str_length = 0;
-    Array vertices, tex, triangles, groups, material_name, materials, maps, lights;
+    Array vertices, tex, triangles, groups, material_name, materials, lights;
     Node *materials_tree, *n;
 
     assert(obj);
@@ -206,7 +162,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
     bzero(materials_tree, sizeof(Node));
     material_name = array_create(sizeof(char*));
     material_name = array_create(sizeof(char*));
-    maps = array_create(sizeof(unsigned char));
     lights = array_create(sizeof(Light));
 
     if(!f) {
@@ -273,7 +228,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
                 goto err;
             }
 
-            res = loadFromMtl(fm, materials_tree, &material_name, &materials, &maps);
+            res = loadFromMtl(fm, materials_tree, &material_name, &materials);
             fclose(fm);
 
             if(res)
@@ -294,6 +249,7 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 				&light.I);
             light.type = LIGHT_AREA;
 
+			vec3_normalize(light.area_n);
 			vec3_build_coordonate_system(light.area_n, &light.area_tan, &light.area_bitan);
             array_push(&lights, &light);
         } else
@@ -310,7 +266,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
         .vertices_tex_count = array_size(&tex),
         .vertices_count = array_size(&vertices),
         .use_uv = use_uv,
-		.map_size = array_size(&maps),
 		.lights_count = array_size(&lights)
     };
 
@@ -319,7 +274,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
         .vertices = vertices.array,
         .vertices_tex = tex.array,
         .materials = materials.array,
-		.map = maps.array,
 		.lights = lights.array
     };
 
@@ -360,10 +314,10 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             vec3_build_coordonate_system(obj->triangles[i].normal, &obj->triangles[i].dpdu, &obj->triangles[i].dpdv);
         else {
             float invDet = 1. / det;
-            obj->triangles[i].dpdu = vec3_smul(invDet,
+            obj->triangles[i].dpdu = vec3_normalize(
                 vec3_diff(vec3_smul(duv12.y, dp02), vec3_smul(duv02.y, dp12))
             );
-            obj->triangles[i].dpdv = vec3_smul(invDet,
+            obj->triangles[i].dpdv = vec3_normalize(
                 vec3_diff(vec3_smul(duv02.x, dp12), vec3_smul(duv12.x, dp02))
             );
         }
@@ -415,7 +369,6 @@ err:
     array_free(&triangles);
     array_free(&groups);
     array_free(&materials);
-    array_free(&maps);
     array_free(&lights);
 
     return -1;

@@ -1,4 +1,4 @@
-#define MAX_DEPTH_BEFORE_ROULETTE	0
+#define MAX_DEPTH_BEFORE_ROULETTE	4
 #define MAX_DEPTH					20
 #define RAY_EPSILON					1e-4
 
@@ -34,7 +34,6 @@ struct Context
 	__constant vec2 *uv;
 	__constant Triangle *tris;
 	__constant BVHNode *bvh_nodes;
-	__constant unsigned char *maps;
 	__constant Light *lights;
 	__constant HostContext *host_ctx;
 
@@ -50,9 +49,12 @@ typedef struct PathElement PathElement;
 struct PathElement
 {
 	vec3 p;
+	vec3 wi, wo;
 	Float weight;
     int triangle_id;
 	bool normalReversed;
+	Transform worldObject;
+	Float current_IOR;
 };
 
 uint randInt(Context *ctx)
@@ -67,6 +69,16 @@ uint randInt(Context *ctx)
 Float randFloat(Context *ctx)
 {
 	return fabs((Float) (randInt(ctx)) / (Float) (0xFFFFFFFF));
+}
+
+bool material_is_specular(Material m)
+{
+	switch(m.type) {
+	case MATERIAL_NONE: return false;
+    case MATERIAL_LAMBERTIAN: return false;
+    case MATERIAL_MIRROR: return true;
+    case MATERIAL_GLASS: return true;
+	}
 }
 
 vec3 UniformSphereSampling(Context *ctx)
@@ -119,151 +131,7 @@ vec3 CosineSampleHemisphere(Context *ctx)
     return output;
 }
 
-Ray getRayFromLightSource(Context *ctx, int light_id) {
-	vec3 w;
-	Ray output = (Ray) {
-		.origin = ctx->lights[light_id].pos,
-		.min_t = RAY_EPSILON,
-		.max_t = 1e10
-	};
-
-	switch(ctx->lights[light_id].type) {
-	case LIGHT_POINT:
-		output.direction = UniformSphereSampling(ctx);
-		break;
-
-	case LIGHT_AREA:
-		w = UniformSampleHemisphere(ctx);
-		output.direction = 
-			w.x * ctx->lights[light_id].area_tan +
-			w.y * ctx->lights[light_id].area_bitan;
-		
-		if(randFloat(ctx) <= 0.5)
-			output.direction += w.z * ctx->lights[light_id].area_n;
-		else
-			output.direction -= w.z * ctx->lights[light_id].area_n;
-		
-		output.origin +=
-			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_width ) * ctx->lights[light_id].area_tan +
-			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_height) * ctx->lights[light_id].area_bitan;
-		break;
-	}
-
-	return output;
-}
-
-
-Float material_computeBRDF(Material *m, vec3 wi, vec3 wo, int lambda)
-{
-    vec3 valid_wo;
-	Float output;
-    Float A, B, sigma2, max_cos;
-    Float sin_alpha, tan_beta;
-    Float sin_theta_wi, sin_theta_wo;
-    Float cos_theta_wi, cos_theta_wo;
-    Float sin_phi_wi, sin_phi_wo;
-    Float cos_phi_wi, cos_phi_wo;
-
-    output = 0;
-
-	cos_theta_wi = wi.z;
-	cos_theta_wo = wo.z;
-	sin_theta_wi = sqrt(1 - cos_theta_wi * cos_theta_wi);
-	sin_theta_wo = sqrt(1 - cos_theta_wo * cos_theta_wo);
-
-    switch(m->type) {
-        case MATERIAL_NONE: break;
-        case MATERIAL_LAMBERTIAN:
-            output = m->l.R * M_1_PI;
-            break;
-        case MATERIAL_MIRROR:
-            output = 1;
-            break;
-		
-        case MATERIAL_GLASS:
-			output = 1;
-			break;
-    }
-
-    return output;
-}
-
-vec3 material_sampleWo(Material *m, vec3 wi, Context *ctx)
-{
-	vec3 wo;
-	Float R0, R_theta;
-    Float cos_theta_wi;
-	Float theta_incident;
-    Float theta_refracted;
-    Float sin_theta_refracted;
-
-	wo = VEC3(0, 0, 0);
-    switch(m->type) {
-        case MATERIAL_NONE:
-            break;
-        case MATERIAL_GLASS:
-			wi.z = fabs(wi.z);
-            cos_theta_wi = wi.z;
-			theta_incident = acos(cos_theta_wi);
-            sin_theta_refracted = 1. / m->g.IOR * sin(theta_incident);
-			wo = wi;
-
-			R0 = (1. - m->g.IOR) / (1. + m->g.IOR);
-			R0 = R0 * R0;
-			R_theta = R0 + (1-R0) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z) * (1. - wi.z);
-
-#if PRINT_DEBUG>=3
-			if(ctx->selectedByCursor) {
-				printf("Wi.z: " FLOAT_FMT "; Theta_i: " FLOAT_FMT "; sin(Theta_o): " FLOAT_FMT "; IOR: " FLOAT_FMT "; R(theta): " FLOAT_FMT "\n",
-					wi.z, theta_incident, sin_theta_refracted, m->g.IOR, R_theta);
-			}
-#endif	
-			if(randFloat(ctx) > R_theta && sin_theta_refracted <= 1 && sin_theta_refracted >= -1) {
-				theta_refracted = asin(sin_theta_refracted);
-				wo.z -= cos_theta_wi;
-				if(cos_theta_wi > 0)
-					wo.z += cos(theta_refracted);
-				else
-					wo.z -= cos(theta_refracted);
-				wo = vec3_normalize(wo);
-			} else
-            	wo.z *= -1;
-			break;
-
-        case MATERIAL_MIRROR:
-			wo = wi;
-            wo.z *= -1;
-			break;
-        case MATERIAL_LAMBERTIAN:
-			wo = CosineSampleHemisphere(ctx);
-			wo.z *= -1;
-			break;
-    }
-	return wo;
-}
-
-Float light_pdf(Context *ctx, int light_id) {
-	switch(ctx->lights[light_id].type) {
-	case LIGHT_POINT:
-		return .25 * M_1_PI;
-	case LIGHT_AREA:
-		return .25 * M_1_PI / (ctx->lights[light_id].area_width * ctx->lights[light_id].area_height);
-	}
-}
-
-Float material_pdf_Wo(Material *m, vec3 wi, vec3 wo, Context *ctx)
-{
-	switch(m->type) {
-        case MATERIAL_NONE:
-        case MATERIAL_MIRROR:
-        case MATERIAL_GLASS:
-            return 1;
-        case MATERIAL_LAMBERTIAN:
-			return fabs(wo.z);
-    }
-}
-
-bool interactionRayBBox(BBox3 b, Ray r)
+bool interactionRayBBox(BBox3 b, Ray r, Float *time)
 {
 	vec3 t1, t2;
 	Float tmin, tmax;
@@ -285,10 +153,11 @@ bool interactionRayBBox(BBox3 b, Ray r)
 		),  (Float) max(t1.z, t2.z)
 	);
 
+	if(time) *time = tmin > 0 ? tmin : tmax;
 	return tmax >= tmin && (tmin > 0 ? tmin : tmax) >= 0 && tmin <= r.max_t;
 }
 
-bool interactionRaySphere(Ray r, vec3 center, Float radius)
+bool interactionRaySphere(Ray r, vec3 center, Float radius, Float *time)
 {
 	vec3 L = r.origin - center;
 	Float a = vec3_norm_2(r.direction);
@@ -311,16 +180,17 @@ bool interactionRaySphere(Ray r, vec3 center, Float radius)
 	if(t0 < 0)
 		t0 = t1;
 
+	if(time) *time = t0;
 	return t0 > r.min_t && t0 < r.max_t;
 }
 
-bool interactionRayLight(Ray r, Light l)
+bool interactionRayLight(Ray r, Light l, Float *time)
 {
 	BBox3 b;
 	vec3 tmp;
 	switch(l.type) {
 	case LIGHT_POINT:
-		return interactionRaySphere(r, l.pos, 1e-1);
+		return interactionRaySphere(r, l.pos, 1e-2, time);
 	
 	case LIGHT_AREA:
 		tmp =
@@ -331,7 +201,8 @@ bool interactionRayLight(Ray r, Light l)
 			.min = l.pos - tmp,
 			.max = l.pos + tmp
 		};
-		return interactionRayBBox(b, r);
+
+		return interactionRayBBox(b, r, time);
 	}
 }
 
@@ -369,7 +240,7 @@ bool interactionRayTriangle(uint t_id, Ray r, Context *ctx)
 	b0 = 1. - b1 - b2;
 
 	t = vec3_dot(e2, s2) * invDiv;
-	if(t <= r.min_t || t >= r.max_t)
+	if(t < r.min_t || t > r.max_t)
 		return false;
 
 	uv0 = ctx->uv[ctx->tris->uv[0]];
@@ -421,7 +292,7 @@ bool traverseScene(Ray r, Context *ctx)
 			seen[last_node] = 0;
 			stack[last_node] = ctx->bvh_nodes[stack[last_node-1]].sons.y;
 		}
-		else if(!interactionRayBBox(ctx->bvh_nodes[stack[last_node]].bounds, r))
+		else if(!interactionRayBBox(ctx->bvh_nodes[stack[last_node]].bounds, r, NULL))
 			last_node --;
 		
 		// Si c'est une feuille
@@ -449,6 +320,160 @@ bool traverseScene(Ray r, Context *ctx)
 	return interact;
 }
 
+vec3 getPointFromLightSource(Context *ctx, int light_id) {
+	vec3 output = ctx->lights[light_id].pos;
+
+	switch(ctx->lights[light_id].type) {
+	case LIGHT_POINT: break;
+	case LIGHT_AREA:
+		output +=
+			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_width ) * ctx->lights[light_id].area_tan +
+			((randFloat(ctx) - .5f) * ctx->lights[light_id].area_height) * ctx->lights[light_id].area_bitan;
+		break;
+	}
+
+	return output;
+}
+
+Float light_pdf(Context *ctx, int light_id) {
+	switch(ctx->lights[light_id].type) {
+	case LIGHT_POINT:
+		return .25 * M_1_PI; // 1/(4*pi)
+	case LIGHT_AREA:
+		return .25 * M_1_PI / (ctx->lights[light_id].area_width * ctx->lights[light_id].area_height);
+	}
+}
+
+Float light_l(Context *ctx, int light_id, vec3 ref_point, vec3 light_point, bool check_for_collision)
+{
+	Ray ray;
+	Float output;
+	vec3 dist, wo;
+
+	if(!check_for_collision)
+		return ctx->lights[light_id].I / vec3_norm_2(light_point - ref_point);
+
+	dist = light_point - ref_point;
+	wo = vec3_normalize(dist);
+
+	ray = (Ray) {
+		.origin = ref_point,
+		.max_t = vec3_norm(dist),
+		.min_t = RAY_EPSILON,
+		.direction = wo
+	};
+
+	if(ctx->selectedByCursor)
+		printf("Light to last point's distance: " FLOAT_FMT "\n", ray.max_t);
+	
+	output = 0.;
+	if(!traverseScene(ray, ctx)) {
+		if(ctx->selectedByCursor)
+			printf("No collision ahead\n");
+	
+		output = ctx->lights[light_id].I
+			/ (vec3_norm_2(dist)) // * light_pdf(ctx, light_id))
+			;
+	}
+	else if(ctx->selectedByCursor)
+		printf("Time of collision: " FLOAT_FMT "; with the triangle %d\n",
+			ctx->interaction.time, ctx->interaction.triangle_id);
+	
+	return output;
+}
+
+Float material_compute_brdf(Material *m, vec3 wi, vec3 wo, int lambda, Float current_IOR, Float *new_IOR)
+{
+    vec3 valid_wo;
+	Float IOR;
+	Float sin_theta_refracted, theta_refracted;
+	
+    switch(m->type) {
+        case MATERIAL_NONE: return 0;
+        default: return 0;
+
+        case MATERIAL_LAMBERTIAN:
+            return m->l.R * M_1_PI;
+        
+		case MATERIAL_MIRROR:
+			if(wi.x == wo.x && wi.y == wo.y && wi.z == -wo.z)
+            	return 1;
+			else
+				return 0;
+		
+        case MATERIAL_GLASS:
+			return 1;
+    }
+}
+
+vec3 material_sample_wo(Material *m, vec3 wi, Context *ctx, Float current_IOR, Float *pdf)
+{
+	vec3 wo, mirror_wo, refracted_wo;
+	Float IOR, tmp;
+	Float T_TE;
+	Float sin_2_theta_incident;
+	Float sin_2_theta_refracted, sin_theta_refracted;
+
+	wo = VEC3(0, 0, 0);
+
+    switch(m->type) {
+        default:
+        case MATERIAL_NONE:
+			if(pdf) *pdf = 1;
+			return wo;
+		
+        case MATERIAL_GLASS:
+			IOR = current_IOR == m->g.IOR ? 1 : m->g.IOR;
+			sin_2_theta_incident = wi.x * wi.x + wi.y * wi.y;
+
+			mirror_wo = wi;
+			mirror_wo.z *= -1;
+
+			tmp = current_IOR / IOR; tmp *= tmp;
+			sin_2_theta_refracted = tmp * sin_2_theta_incident;
+
+			if(sin_2_theta_refracted > 1) {
+				if(pdf) *pdf = 1;
+				return mirror_wo;
+			}
+			
+			sin_theta_refracted = sqrt(sin_2_theta_refracted);
+
+			refracted_wo.x = wi.x * sin_theta_refracted;
+			refracted_wo.y = wi.y * sin_theta_refracted;
+			refracted_wo.z = wi.z;
+
+			refracted_wo = vec3_normalize(refracted_wo);
+
+			T_TE = 2. * current_IOR * fabs(wi.z);
+			T_TE /= current_IOR * fabs(wi.z) + IOR * fabs(refracted_wo.z);
+#if PRINT_DEBUG>=3
+			if(ctx->selectedByCursor) {
+				printf("Here we go ! " FLOAT_FMT "\n", T_TE);
+			}
+#endif
+
+			if(randFloat(ctx) < T_TE) {
+				if(pdf) *pdf = T_TE;
+				return refracted_wo;
+			} else {
+				if(pdf) *pdf = 1. - T_TE;
+				return mirror_wo;
+			}
+
+        case MATERIAL_MIRROR:
+			wo = wi;
+            wo.z *= -1;
+			if(pdf) *pdf = 1;
+			return wo;
+		
+        case MATERIAL_LAMBERTIAN:
+			wo = CosineSampleHemisphere(ctx);
+			wo.z *= -1;
+			if(pdf) *pdf = fabs(wo.z) * M_1_PI;
+			return wo;
+    }
+}
 
 Float compute_simple_ray(Ray ray, Context *ctx)
 {
@@ -470,18 +495,7 @@ Float compute_simple_ray(Ray ray, Context *ctx)
 		return 0;
 	}
 
-	if(ctx->interaction.m.normal_map.width > 0 && ctx->interaction.m.normal_map.height > 0) {
-		i = ctx->interaction.uv.x * ctx->interaction.m.normal_map.width;
-		j = ctx->interaction.uv.y * ctx->interaction.m.normal_map.height;
-
-		x = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 0] / 255.;
-		y = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 1] / 255.;
-		z = (Float) ctx->maps[ctx->interaction.m.normal_map.start + 3 * (ctx->interaction.m.normal_map.width * j + i) + 2] / 255.;
-		
-		n = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
-		n = vec3_normalize(n);
-	} else
-		n = ctx->interaction.n;
+	n = ctx->interaction.n;
 
 	if(ctx->selectedByCursor) {
 		ctx->selected_triangle = ctx->interaction.triangle_id;
@@ -500,8 +514,6 @@ Float compute_simple_ray(Ray ray, Context *ctx)
 			ctx->interaction.p.x, ctx->interaction.p.y, ctx->interaction.p.z);
 		printf("UV: " FLOAT_FMT " " FLOAT_FMT "\n",
 			ctx->interaction.uv.x, ctx->interaction.uv.y);
-		printf("Normal map: %d %d\n",
-			ctx->interaction.m.normal_map.width, ctx->interaction.m.normal_map.height);
 		printf("Time : " FLOAT_FMT "\n",
 			ctx->interaction.time);
 	}
@@ -514,7 +526,7 @@ Float compute_simple_ray(Ray ray, Context *ctx)
 }
 
 
-int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_depth_before_roulette)
+int compute_ray(Ray ray, Context *ctx, PathElement *path)
 {
 	vec3 wi, wo;
 	int depth;
@@ -527,20 +539,25 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 	Float x, y, z;
 	Float rrFactor;
 	Float rrStopProbability;
+	Float current_IOR, new_IOR;
+	Float pdf;
 
-    weight = w0;
+    weight = 1;
+	current_IOR = 1;
 
 	path[0] = (PathElement){
 		.p = ray.origin,
-		.weight = w0,
+		.weight = 1,
+		.wi = VEC3(0, 0, 0),
+		.wo = VEC3(0, 0, 0),
 		.normalReversed = false,
-        .triangle_id = -1
+        .triangle_id = -1,
+		.current_IOR = current_IOR
 	};
 
-	addLastPoint = true;
-	for(depth = 0; weight > 0 && depth < MAX_DEPTH; depth ++) {
+	for(depth = 1; weight > 0 && depth <= MAX_DEPTH; depth ++) {
 		rrFactor = 1.0;
-		if(depth > max_depth_before_roulette) {
+		if(depth > MAX_DEPTH_BEFORE_ROULETTE) {
 			rrStopProbability = 0.9;
 			Float d = randFloat(ctx);
             if(d <= rrStopProbability) {
@@ -568,7 +585,6 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 			if(ctx->selectedByCursor)
 				printf("Out !\n");
 #endif
-			addLastPoint = false;
 			break;
 		}
 
@@ -577,27 +593,6 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 			interaction.n *= -1;
 			interaction.dpdu *= -1;
 		}
-
-		interaction.n    = vec3_normalize(interaction.n);
-		interaction.dpdu = vec3_normalize(interaction.dpdu);
-		interaction.dpdv = vec3_normalize(interaction.dpdv);
-/*
-		if(interaction.m.normal_map.width > 0 && interaction.m.normal_map.height > 0) {
-			i = interaction.uv.x * interaction.m.normal_map.width;
-			j = interaction.uv.y * interaction.m.normal_map.height;
-
-			x = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 0] / 255.;
-			y = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 1] / 255.;
-			z = (Float) ctx->maps[interaction.m.normal_map.start + 3 * (interaction.m.normal_map.width * j + i) + 2] / 255.;
-			interaction.n    = x * ctx->interaction.dpdu + y * ctx->interaction.dpdv + z * ctx->interaction.n;
-			interaction.dpdu += interaction.n - ctx->interaction.n;
-			interaction.dpdv += interaction.n - ctx->interaction.n;
-
-			interaction.n = vec3_normalize(interaction.n);
-			interaction.dpdu = vec3_normalize(interaction.n);
-			interaction.dpdv = vec3_normalize(interaction.n);
-		}
-*/
 
 		// Prepare the matrix
 		worldObject.mat.v4[0][0] = interaction.dpdu.x;
@@ -631,7 +626,7 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 
 		// Compute the ray's next direction
 		wi = vec3_normalize(transform_apply_vector(ray.direction, transform_inverse(worldObject)));
-		wo = material_sampleWo(&interaction.m, wi, ctx);
+		wo = material_sample_wo(&interaction.m, wi, ctx, current_IOR, &pdf);
 		
 		if(wo.x == 0 && wo.y == 0 && wo.z == 0) {
 #if PRINT_DEBUG>=3
@@ -641,12 +636,10 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 			break;
 		}
 		
-		weight = weight
-			* fabs(wo.z)
-			* material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda);
-			/ material_pdf_Wo(&interaction.m, wi, wo, ctx)
-			;
-
+		weight = weight * fabs(wo.z)
+			* material_compute_brdf(&interaction.m, wi, wo, ctx->host_ctx->lambda, current_IOR, &new_IOR)
+			/ pdf;
+	
 #if PRINT_DEBUG>=3
 		if(ctx->selectedByCursor) {
 			printf("Normal: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
@@ -663,26 +656,33 @@ int compute_ray(Ray ray, Context *ctx, PathElement *path, Float w0, int max_dept
 				wo.x, wo.y, wo.z);
 			printf("UV: " FLOAT_FMT " " FLOAT_FMT "\n",
 				interaction.uv.x, interaction.uv.y);
-			printf("BRDF: " FLOAT_FMT "\n", material_computeBRDF(&interaction.m, wi, wo, ctx->host_ctx->lambda));
+			printf("BRDF: " FLOAT_FMT "\n", material_compute_brdf(&interaction.m, wi, wo, ctx->host_ctx->lambda, current_IOR, NULL));
 			printf("Time : " FLOAT_FMT "\nWeight : " FLOAT_FMT "\nTriangle : %d\n",
 				interaction.time, weight, interaction.triangle_id);
+			matrix_print(worldObject.mat);
+
 		}
 #endif
 
-		path[depth+1] = (PathElement){
+		path[depth] = (PathElement){
 			.p = interaction.p,
 			.weight = weight,
+			.wi = wi,
+			.wo = wo,
 			.normalReversed = vec3_dot(ray.direction, ctx->interaction.n) < 0,
-            .triangle_id = interaction.triangle_id
+            .triangle_id = interaction.triangle_id,
+			.worldObject = worldObject,
+			.current_IOR = current_IOR
 		};
 
 		// Calcul du rayon de la prochaine étape
-		ray.origin = interaction.p;
+		ray.origin = path[depth].p;
 		ray.max_t = ctx->host_ctx->camera.max_t;
 		ray.direction = vec3_normalize(transform_apply_vector(wo, worldObject));
+		current_IOR = new_IOR;
 	}
 
-	return depth+1;
+	return depth - 1;
 }
 
 kernel void compute_pixel(
@@ -693,7 +693,6 @@ kernel void compute_pixel(
 	__constant BVHNode *bvh_nodes,
 	__constant HostContext *host_ctx,
 	__global int *selected_triangle,
-	__constant unsigned char *maps,
 	__constant Light *lights,
 	__global Float *raw,
 	__write_only image2d_t output,
@@ -711,7 +710,6 @@ kernel void compute_pixel(
 		.tris = tris,
 		.bvh_nodes = bvh_nodes,
 		.host_ctx = host_ctx,
-		.maps = maps,
 		.lights = lights,
 		.on_screen_pos = on_screen_pos,
 		.selected_triangle = *selected_triangle,
@@ -749,7 +747,7 @@ kernel void compute_pixel(
 
 	if(ctx.host_ctx->simpleView) {
 		for(i = 0; i < host_ctx->scene_meta.lights_count; i ++)
-			if(interactionRayLight(ray, ctx.lights[i]))
+			if(interactionRayLight(ray, ctx.lights[i], NULL))
 				break;
 		if(i != host_ctx->scene_meta.lights_count) {
 			// On colorie la face en noir si elle ne nous fait pas face
@@ -761,94 +759,104 @@ kernel void compute_pixel(
 			grayscale = 127 * compute_simple_ray(ray, &ctx);
 		write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
 	} else {
+		Float tmp, totalVal, weight, light_l_pow;
 		int cam_path_length = 0;
-		int light_path_length = 0;
-		PathElement cam_path[MAX_DEPTH];
-		PathElement light_path[MAX_DEPTH];
+		PathElement cam_path[MAX_DEPTH + 1];
 		
 #if PRINT_DEBUG>=2
 		if(ctx.selectedByCursor)
 			printf("Computing camera's path\n");
 #endif
-		cam_path_length = compute_ray(ray, &ctx, cam_path, 1, 1);
 
+		cam_path_length = compute_ray(ray, &ctx, cam_path);
 
-#if PRINT_DEBUG>=2
-		if(ctx.selectedByCursor)
-			printf("Computing light's path\n");
-#endif
-		int light_id = randFloat(&ctx) * host_ctx->scene_meta.lights_count;
-		light_path_length = compute_ray(getRayFromLightSource(&ctx, light_id), &ctx, light_path, light_pdf(&ctx, light_id) / host_ctx->scene_meta.lights_count, 1);
+		for(i = 1; i <= cam_path_length; i ++) {	
+			int light_id = randFloat(&ctx) * host_ctx->scene_meta.lights_count;		
+			if(ctx.selectedByCursor)
+				printf("Light %d for %d\n", light_id, i);
+			
+			Material mat = materials[tris[cam_path[i].triangle_id].material];
+			weight = 0;
 
-		Float tmp, totalVal;
-
-		int depth;
-		int samplingCount = 0;
-		totalVal = 0;
-        vec3 dist, wo, wi;
-		for(i = 1; i < cam_path_length; i ++) {
-			for(j = 0; j < light_path_length; j ++) {
-				depth = i + j - 2;
-				if((i == 1 && j == 1) || depth < 0 || depth > MAX_DEPTH)
+			if(!material_is_specular(mat)) {
+				vec3 light_point = getPointFromLightSource(&ctx, light_id);
+				light_l_pow = light_l(&ctx, light_id, cam_path[i].p, light_point, true);
+				
+				if(light_l_pow == 0)
 					continue;
 
-			    samplingCount ++;
-
-                dist = light_path[j].p - cam_path[i].p;
-                wo = vec3_normalize(dist);
-				ray = (Ray) {
+				vec3 wo = transform_apply_vector(
+					vec3_normalize(light_point - cam_path[i].p),
+					transform_inverse(cam_path[i].worldObject)
+				);
+				weight = cam_path[i-1].weight
+					* material_compute_brdf(&mat, cam_path[i].wi, wo, host_ctx->lambda, cam_path[i].current_IOR, NULL)
+					* fabs(wo.z);
+				
+				if(ctx.selectedByCursor) {
+					printf("Cam's Point: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+						cam_path[i].p.x, cam_path[i].p.y, cam_path[i].p.z);
+					printf("Light's Point: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+						light_point.x, light_point.y, light_point.z);
+					printf("Light's power : " FLOAT_FMT "; Path's weight: " FLOAT_FMT "\n", light_l_pow, weight);
+					printf("Has the normal been reversed ? %s\n", cam_path[i].normalReversed ? "Yes" : "No");
+				}
+			} else {
+				Ray r = (Ray) {
 					.origin = cam_path[i].p,
-					.direction = wo,
-					.max_t = vec3_norm(dist),       //On ne va pas plus loin que les 2 points
-                    .min_t = RAY_EPSILON            		//NOTE: Purement arbitraire
+					.max_t =
+						i < cam_path_length - 1 ?
+							vec3_norm(cam_path[i+1].p - cam_path[i].p) :
+							host_ctx->camera.max_t,
+					.min_t = RAY_EPSILON,
+					.direction = transform_apply_vector(
+						material_sample_wo(&mat, cam_path[i].wi, &ctx, cam_path[i].current_IOR, NULL),
+						cam_path[i].worldObject
+					)
 				};
 
-                wi = vec3_normalize(cam_path[i].p - cam_path[i-1].p);
-                
-                // TODO: wi et wo dans le plan normal
-
-				tmp = -1;
-                Material mat = ctx.materials[ctx.tris[cam_path[i].triangle_id].material];
-				if(!traverseScene(ray, &ctx))
-					tmp = light_path[j].weight *
-						cam_path[i].weight *
-                        material_computeBRDF(&mat, wi, wo, ctx.host_ctx->lambda) *                        
-						lights[light_id].I;
-#if PRINT_DEBUG>=3
 				if(ctx.selectedByCursor) {
-					printf("Output between %d (" FLOAT_FMT ";" FLOAT_FMT ";" FLOAT_FMT ") and %d (" FLOAT_FMT ";" FLOAT_FMT ";" FLOAT_FMT "): " FLOAT_FMT ";",
-                           i, cam_path[i].p.x, cam_path[i].p.y, cam_path[i].p.z,
-                           j, light_path[j].p.x, light_path[j].p.y, light_path[j].p.z,
-                           tmp);
-                    if(tmp == -1)
-                        printf("Obstructed by triangle %d, time: " FLOAT_FMT "\n", ctx.interaction.triangle_id, ctx.interaction.time);
-                    else
-                        printf("\n");
-                }
-#endif
-				if(tmp > 0) {
-					totalVal += tmp;
-                }
+					printf("Cam's Point: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
+						cam_path[i].p.x, cam_path[i].p.y, cam_path[i].p.z);
+				}
+
+				Float time;
+				if(interactionRayLight(r, ctx.lights[light_id], &time)) {
+					weight = cam_path[i].weight;
+					light_l_pow = light_l(&ctx, light_id, cam_path[i].p, cam_path[i].p + time * r.direction, false);
+
+					if(ctx.selectedByCursor) {
+						printf("Went through : " FLOAT_FMT "; " FLOAT_FMT " !\n", time, light_l_pow);
+					}
+				}
 			}
+
+			if(ctx.selectedByCursor) {
+				printf("Added : " FLOAT_FMT "; " FLOAT_FMT " !\n", weight, light_l_pow);
+			}
+			totalVal += weight * light_l_pow;
 		}
+		if(ctx.selectedByCursor) {
+			printf("Total : " FLOAT_FMT " !\n", totalVal);
+		}
+
 		if(host_ctx->sampleCount == 1)
 			raw[index] = 0;
-		if(samplingCount > 0)
-			raw[index] += totalVal / samplingCount;
+		if(cam_path_length > 0)
+			raw[index] += totalVal / cam_path_length;
 
 #if PRINT_DEBUG>=1
 		if(ctx.selectedByCursor)
-			printf("Mean weight : " FLOAT_FMT "; Light's path's length: %d; Camera's path's length: %d; Selected triangle: %d\n",
-				raw[index] / host_ctx->sampleCount, cam_path_length, light_path_length, ctx.selected_triangle);
+			printf("Mean weight : " FLOAT_FMT "; Camera's path's length: %d; Selected triangle: %d\n",
+				raw[index] / host_ctx->sampleCount, cam_path_length, ctx.selected_triangle);
 #endif
 
 		tmp = raw[index] / host_ctx->sampleCount;
-		if(tmp > host_ctx->max_threshold)
-			write_imagei(output, on_screen_pos, INT4(255, 0, 0, 0));
-		else if(tmp < 0)
+        if(tmp < 0)
 			write_imagei(output, on_screen_pos, INT4(0, 255, 0, 0));
 		else {
-			grayscale = 127 * tmp;
+			grayscale = 255 * log(tmp + 1) / host_ctx->max_threshold;
+            if(grayscale >= 255) grayscale = 255;
 			write_imagei(output, on_screen_pos, INT4(grayscale, grayscale, grayscale, 0));
 		} 
 	}

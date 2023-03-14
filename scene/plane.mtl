@@ -2,5 +2,5 @@ newmtl Plane 1
 R 0.9
 
 newmtl None 0
-norm scene/normal_map.ppm
+
 

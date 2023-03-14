@@ -34,7 +34,6 @@ struct SceneMetadata
     size_t groups_count;
     
     size_t materials_count;
-    size_t map_size;
     size_t lights_count;
 
     BVHTree tree;
@@ -51,7 +50,6 @@ struct Scene
     Triangle *triangles;
 
     Material *materials;
-	unsigned char* map;
 	Light* lights;
 };
 

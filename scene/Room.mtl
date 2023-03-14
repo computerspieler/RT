@@ -14,7 +14,7 @@ R 0.1
 
 newmtl Blackboard 1
 R 0.01
-norm scene/normal_map.ppm
+
 
 newmtl Glass 4
 IOR 1.5

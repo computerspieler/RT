@@ -3,7 +3,6 @@
 
 #include "typedef.h"
 #include "spectrum.h"
-#include "map.h"
 
 typedef enum MaterialType MaterialType;
 enum MaterialType
@@ -49,8 +48,6 @@ typedef struct Material Material;
 struct Material
 {
     MaterialType type;
-    
-	Map normal_map;
 
     union {
         MaterialLambertian l;

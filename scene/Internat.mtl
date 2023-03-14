@@ -1,13 +1,17 @@
 # Blender MTL File: 'None'
 # Material Count: 1
-newmtl Wall 1
+# mtllib scene/Internat.mtl
+newmtl Room 1
+R 0.9
+
+newmtl Door 1
 R 0.9
 
 newmtl Table 1
 R 0.9
 
 newmtl Storage 1
-R 0.9
+R 0.6
 
 newmtl Armoire 1
 R 0.9
@@ -19,4 +23,3 @@ newmtl Minifrigo 1
 R 0.5
 
 newmtl Other 0
-norm scene/normal_map.ppm

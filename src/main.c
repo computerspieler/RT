@@ -25,8 +25,8 @@
 	exit(EXIT_FAILURE);						\
 }
 
-#define SCREEN_WIDTH  200
-#define SCREEN_HEIGHT 200
+#define SCREEN_WIDTH  400
+#define SCREEN_HEIGHT 400
 
 #define SURFACE_WIDTH  100
 #define SURFACE_HEIGHT 100
@@ -153,9 +153,6 @@ int main(int argc, char* argv[])
 
 	TRY(opencl_add_input_output_buffer, exit,
 		&cl_gen, &cl_prg, &selected_triangle, sizeof(int));
-
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.map, ctx.scene_meta.map_size * sizeof(unsigned char));
 	
 	TRY(opencl_add_input_buffer, exit,
 		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
