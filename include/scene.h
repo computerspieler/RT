@@ -20,6 +20,10 @@ struct Triangle
 
     long int material;
     long int group;
+
+	Float area;
+
+	int original_id;
 };
 
 typedef struct SceneMetadata SceneMetadata;

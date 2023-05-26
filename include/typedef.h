@@ -1,8 +1,10 @@
 #ifndef _TYPEDEF_H_
 #define _TYPEDEF_H_
 
-typedef float Float;
-#define FLOAT_FMT "%f"
+#include "config.h"
+
+typedef double Float;
+#define FLOAT_FMT "%lf"
 typedef unsigned int uint;
 
 #ifndef IN_OPENCL
@@ -63,11 +65,16 @@ Float rsqrt(Float x);
 #define FLOAT3(_x, _y, _z)      (float3) ((_x), (_y), (_z))
 #define FLOAT4(_x, _y, _z, _w)  (float4) ((_x), (_y), (_z), (_w))
 
+typedef unsigned int uint32_t;
+typedef int int32_t;
+
+#define UINT32_C(_x)        ((uint32_t)(_x))
+
 #endif
 
-#define VEC3(_x, _y, _z)        FLOAT3(_x, _y, _z)
-typedef float3 vec3;
-#define VEC2(_x, _y)        	FLOAT2(_x, _y)
-typedef float2 vec2;
+#define VEC3(_x, _y, _z)        DOUBLE3(_x, _y, _z)
+typedef double3 vec3;
+#define VEC2(_x, _y)        	DOUBLE2(_x, _y)
+typedef double2 vec2;
 
 #endif

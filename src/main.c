@@ -3,33 +3,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
-#include <SDL/SDL.h>
 #include <string.h>
 #include <limits.h>
 #include <time.h>
 #include <sys/time.h>
+
+#include <GL/glut.h>
 
 #include "bvhtree.h"
 #include "cl_handler.h"
 #include "material.h"
 #include "scene_loader.h"
 #include "scene.h"
-#include "camera.h"
 #include "transform.h"
 #include "host.h"
+#include "sample.h"
 #include "kernel/main.cl.h"
-
-#define SDL_FATAL(func)						\
-{											\
-	printf(#func ": %s\n", SDL_GetError());	\
-	exit(EXIT_FAILURE);						\
-}
-
-#define SCREEN_WIDTH  400
-#define SCREEN_HEIGHT 400
-
-#define SURFACE_WIDTH  100
-#define SURFACE_HEIGHT 100
 
 long long get_current_time()
 {
@@ -38,42 +27,216 @@ long long get_current_time()
 	return te.tv_sec * 1000LL + te.tv_usec / 1000;
 }
 
-const cl_double speed = 0.125f;
+vec3 rotation, position;
+float *viewer_vertices;
+float *viewer_colors;
+HostContext ctx;
+
+void display()
+{
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClearColor(.4, .58, .94, 1);
+
+	glLoadIdentity();
+	glRotatef(rotation.x, 1, 0, 0);
+	glRotatef(rotation.y, 0, 1, 0);
+	glRotatef(rotation.z, 0, 0, 1);
+	glTranslatef(position.x, position.y, position.z);
+	
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glVertexPointer(3, GL_FLOAT, 0, viewer_vertices);
+	
+	glEnableClientState(GL_COLOR_ARRAY);
+	glColorPointer(3, GL_FLOAT, 0, viewer_colors);
+	
+	glDrawArrays(GL_TRIANGLES, 0, 3 * ctx.scene_meta.triangles_count);
+	
+	glDisableClientState(GL_VERTEX_ARRAY);
+	glFlush();
+	glutSwapBuffers();
+}
+
+void reshape(int w, int h)
+{
+	glViewport(0, 0, (GLsizei) w, (GLsizei) h);
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	gluPerspective(60, (GLfloat) w / (GLfloat) h, 0.1, 100.0);
+	glMatrixMode(GL_MODELVIEW);
+}
+
+const double speed = .25;
+void keyboard(unsigned char key, int x, int y)
+{
+	switch (key) {
+	case 'q': case 'Q': position.x += speed; break;
+	case 'd': case 'D': position.x -= speed; break;
+	case  8 :			position.y += speed; break;
+	case ' ':			position.y -= speed; break;
+	case 'z': case 'Z': position.z += speed; break;
+	case 's': case 'S': position.z -= speed; break;
+
+	case 27: exit(0); return;
+	default: return;
+	}
+	glutPostRedisplay();
+}
+
+void keyboard_special(int key, int x, int y)
+{
+	switch (key) {
+	case 101: rotation.x +=  speed * 2. * M_PI; break;
+	case 103: rotation.x += -speed * 2. * M_PI; break;
+	case 100: rotation.y += -speed * 2. * M_PI; break;
+	case 102: rotation.y +=  speed * 2. * M_PI; break;
+	case 104: rotation.z += -speed * 2. * M_PI; break;
+	case 105: rotation.z +=  speed * 2. * M_PI; break;
+
+	default: return;
+	}
+	glutPostRedisplay();
+}
+
+Scene obj;
+
+Float MRSE;
+Float mean_time;
+Float total_area;
+long long first_start;
+long int lost_photons;
+
+size_t origin[3] = {0};
+size_t region[3] = {SAMPLE_PER_ITERATION, 1, 1};
+
+Sample *density_per_tri;
+TaskOutput *task_output;
+OpenCL_GeneralContext cl_gen;
+OpenCL_ProgramContext cl_prg;
+
+long int count = 0;
+
+void update(int iteration_count)
+{
+	long long start = get_current_time();
+	ctx.seed = (uint) rand();
+	opencl_run(&cl_gen, &cl_prg, origin, region);
+	opencl_postrun(&cl_gen, &cl_prg, origin, region);
+	
+	for(int i = 0; i < SAMPLE_PER_ITERATION; i ++) {
+		for(int j = 0; j < task_output[i].length; j ++) {
+			int triangle_id = task_output[i].triangles_associated[j];
+
+			density_per_tri[triangle_id].count ++;
+			Float count_f = (Float) density_per_tri[triangle_id].count;
+			
+			density_per_tri[triangle_id].mean *= (count_f - 1) / count_f;
+			density_per_tri[triangle_id].mean += task_output[i].values[j] / count_f;
+		}
+		count += task_output[i].length-1;
+		if(!task_output[i].went_out_of_bounds)
+			count ++;
+	}
+
+	mean_time *= iteration_count - 1;
+	mean_time += get_current_time() - start;
+	mean_time /= iteration_count;
+
+	printf(
+		"Milliseconds spent: %lld, Mean time per sampling: %f, iteration count: %d\r",
+		get_current_time() - start,
+		mean_time,
+		iteration_count
+	);
+
+	if(iteration_count % 10 == 0) {
+		MRSE = 0;
+		printf("\n");
+
+		Float max = 0;
+		Float tmp = 0;
+
+		for(size_t i = 0; i < ctx.scene_meta.triangles_count; i ++) {
+			tmp  = density_per_tri[i].mean;
+			tmp *= (Float) density_per_tri[i].count / (Float) count;
+			MRSE += tmp;
+			
+			for(int j = 0; j < 9; j ++)
+				viewer_colors[9 * i + j] = density_per_tri[i].mean / max;
+		}
+		
+		MRSE /= total_area;
+		printf("MRSE: " FLOAT_FMT "\n", MRSE);
+
+		glutPostRedisplay();
+	}
+
+	glutTimerFunc(2, update, iteration_count + 1);
+}
+
+int createBuffers()
+{
+	cl_int err;
+
+	viewer_vertices = malloc(ctx.scene_meta.triangles_count * 9 * sizeof(float));
+	for(size_t i = 0; i < ctx.scene_meta.triangles_count; i ++) {
+		for(int j = 0; j < 3; j ++) {
+			vec3 p = obj.vertices[obj.triangles[i].vertices[j]];
+
+			viewer_vertices[9 * i + 3 * j    ] = p.x;
+			viewer_vertices[9 * i + 3 * j + 1] = p.y;
+			viewer_vertices[9 * i + 3 * j + 2] = p.z;
+		}
+	}
+
+	viewer_colors   = malloc(ctx.scene_meta.triangles_count * 9 * sizeof(float));
+	bzero(viewer_colors, ctx.scene_meta.triangles_count * 9 * sizeof(float));
+
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.materials, ctx.scene_meta.materials_count * sizeof(Material));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.vertices, ctx.scene_meta.vertices_count * sizeof(vec3));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.vertices_tex, ctx.scene_meta.vertices_tex_count * sizeof(vec2));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.triangles, ctx.scene_meta.triangles_count * sizeof(Triangle));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.nodes_count * sizeof(BVHNode));
+
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, &ctx, sizeof(HostContext));
+	
+	TRY(opencl_add_input_buffer, exit,
+		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
+
+	density_per_tri = (Sample*) malloc(ctx.scene_meta.triangles_count * sizeof(Sample));
+	bzero(density_per_tri, ctx.scene_meta.triangles_count * sizeof(Sample));
+
+	task_output = (TaskOutput*) malloc(SAMPLE_PER_ITERATION * sizeof(TaskOutput));
+	TRY(opencl_add_input_output_buffer, exit,
+		&cl_gen, &cl_prg, task_output, SAMPLE_PER_ITERATION * sizeof(TaskOutput));
+		
+exit:
+	return err;
+}
+
+void freeBuffers()
+{
+	free(task_output);
+	free(density_per_tri);
+	free(viewer_colors);
+	free(viewer_vertices);
+
+	scene_delete(&obj, &ctx.scene_meta);
+}
+
 int main(int argc, char* argv[])
 {
-	bool update;
 	FILE *f;
-	Scene obj;
 	cl_int err;
-	SDL_Surface* screen;
-	OpenCL_GeneralContext cl_gen;
-	OpenCL_ProgramContext cl_prg;
-	SDL_Event ev;
-	int running = 1;
-	int selected_triangle = -1;
-	size_t origin[3] = {0};
-	size_t region[3] = {SCREEN_WIDTH, SCREEN_HEIGHT, 1};
-	void *output;
-
-	HostContext ctx = (HostContext) {
-		.sampleCount = 0,
-		.camera = (Camera) {
-			.near = 0.1f,
-			.pos = VEC3(0, 0, 0),
-			.rot = VEC3(0, 0, 0),
-			.fov = M_PI / 3.f,
-			.max_t = 1e2,
-			.viewport = (int2){.x = SCREEN_WIDTH, .y = SCREEN_HEIGHT}
-		},
-		.simpleView = true,
-		.max_threshold = 10
-	};
-	ctx.camera.rotation_transform = transform_combine(
-		transform_combine(
-			transform_rotate_x(ctx.camera.rot.x),
-			transform_rotate_y(ctx.camera.rot.y)
-		), transform_rotate_z(ctx.camera.rot.z)
-	);
 
 	if(argc != 2) {
 		printf("Usage: program [SCENE]\n");
@@ -81,23 +244,6 @@ int main(int argc, char* argv[])
 	}
 
 	srand(time(NULL));
-
-	if(SDL_Init(SDL_INIT_VIDEO) < 0)
-		SDL_FATAL(SDL_Init);
-
-	if (SDL_EnableKeyRepeat(100, SDL_DEFAULT_REPEAT_INTERVAL))
-		SDL_FATAL(SDL_EnableKeyRepeat);
-
-	screen = SDL_SetVideoMode(
-		SCREEN_WIDTH,
-		SCREEN_HEIGHT,
-		32, SDL_HWSURFACE
-	);
-
-	if(!screen)
-		SDL_FATAL(SDL_SetVideoMode);
-
-	SDL_WM_SetCaption("RayTracing", NULL);
 	
 	// Open the context
 	err = opencl_init_general_context(&cl_gen);
@@ -121,150 +267,47 @@ int main(int argc, char* argv[])
 
 	printObjectInfo(ctx.scene_meta);
 
-	char buffer[1024];
 
+	char arguments[1024];
 	printf("Compile the program\n");
 	sprintf(
-		buffer, "-DMAX_TREE_DEPTH=%u",
+		arguments, "-DMAX_TREE_DEPTH=%u",
 		BVHTree_depth(ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.root)
 	);
 
 	TRY(opencl_build_program, exit,
-		&cl_gen, &cl_prg, "compute_pixel", buffer);
+		&cl_gen, &cl_prg, "compute_sample", arguments);
 	
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.materials, ctx.scene_meta.materials_count * sizeof(Material));
-	
-	printf("Load the buffers\n");
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.vertices, ctx.scene_meta.vertices_count * sizeof(vec3));
-	
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.vertices_tex, ctx.scene_meta.vertices_tex_count * sizeof(vec2));
-	
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.triangles, ctx.scene_meta.triangles_count * sizeof(Triangle));
-	
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, ctx.scene_meta.tree.nodes, ctx.scene_meta.tree.nodes_count * sizeof(BVHNode));
-
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, &ctx, sizeof(HostContext));
-
-	TRY(opencl_add_input_output_buffer, exit,
-		&cl_gen, &cl_prg, &selected_triangle, sizeof(int));
-	
-	TRY(opencl_add_input_buffer, exit,
-		&cl_gen, &cl_prg, obj.lights, ctx.scene_meta.lights_count * sizeof(Light));
-
-	output = malloc(SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(Float));
-	bzero(output, SCREEN_HEIGHT * SCREEN_WIDTH * sizeof(Float));
-	
-	TRY(opencl_add_input_output_buffer, exit,
-		&cl_gen, &cl_prg, output, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(Float));
-
-	TRY(opencl_add_output_image, exit,
-		&cl_gen, &cl_prg, (cl_uchar4**) &screen->pixels, SCREEN_WIDTH, SCREEN_HEIGHT
-	);
-
-	// 
-	void *irradiance = malloc(SURFACE_WIDTH * SURFACE_HEIGHT * sizeof(Float));
-
-	TRY(opencl_add_input_output_buffer, exit,
-		&cl_gen, &cl_prg, irradiance, SURFACE_WIDTH * SURFACE_HEIGHT * sizeof(Float));
+	TRY(createBuffers, exit);
 
 	printf("Run the program\n");
 	opencl_prerun(&cl_prg);
-    ctx.lambda = 400;
 
-    printf("Wavelength: %d\n", ctx.lambda);
-	long long first_start = get_current_time();
-	float mean_time = 0.f;
+	first_start = get_current_time();
+	mean_time = 0.f;
+	total_area = 0;
+	for(size_t i = 0; i < ctx.scene_meta.triangles_count; i ++)
+		total_area += obj.triangles[i].area;
+	printf("Area: " FLOAT_FMT "\n", total_area);
+	rotation = position = VEC3(0, 0, 0);
 	
-	while(running)
-	{
-		while(!SDL_PollEvent(&ev) || ev.type == SDL_NOEVENT) {
-			SDL_LockSurface(screen);
-			for(int i = 0; i < 1; i ++) {
-				ctx.sampleCount ++;
-				long long start = get_current_time();
-				ctx.seed = (uint) start;
-				opencl_run(&cl_gen, &cl_prg, origin, region);
-				opencl_postrun(&cl_gen, &cl_prg, origin, region);
-				mean_time *= ctx.sampleCount - 1;
-				mean_time += get_current_time() - start;
-				mean_time /= ctx.sampleCount;
-				printf(
-					"Milliseconds spent: %lld, Mean time per sampling: %f, time since the beginning: %lld, Wavelength: %d\n",
-					get_current_time() - start,
-					mean_time,
-					(get_current_time() - first_start) / 1000,
-					ctx.lambda
-				);
-			}
-			SDL_UnlockSurface(screen);
-			
-			SDL_Flip(screen);
-		}
-		
-		switch(ev.type)
-		{
-			case SDL_QUIT:
-				running = 0;
-				break;
+	glutInitWindowSize(200, 200);
+	glutInit(&argc, argv);
+	glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH);
+	glutCreateWindow(argv[0]);
 
-			case SDL_KEYDOWN:
-				update = ctx.simpleView;
-				switch(ev.key.keysym.sym) {
-				case SDLK_q:			if(ctx.simpleView) ctx.camera.pos.x -= speed; break;
-				case SDLK_d:			if(ctx.simpleView) ctx.camera.pos.x += speed; break;
-				case SDLK_SPACE:		if(ctx.simpleView) ctx.camera.pos.y -= speed; break;
-				case SDLK_BACKSPACE:	if(ctx.simpleView) ctx.camera.pos.y += speed; break;
-				case SDLK_z:			if(ctx.simpleView) ctx.camera.pos.z += speed; break;
-				case SDLK_s:			if(ctx.simpleView) ctx.camera.pos.z -= speed; break;
+	glClearColor(.4, .58, .94, 1);
+	glShadeModel(GL_FLAT);
+	glEnable(GL_DEPTH_TEST);
 
-				case SDLK_UP:			if(ctx.simpleView) ctx.camera.rot.x += speed; break;
-				case SDLK_DOWN:			if(ctx.simpleView) ctx.camera.rot.x -= speed; break;
-				case SDLK_LEFT:			if(ctx.simpleView) ctx.camera.rot.y -= speed; break;
-				case SDLK_RIGHT:		if(ctx.simpleView) ctx.camera.rot.y += speed; break;
-				case SDLK_PAGEUP:		if(ctx.simpleView) ctx.camera.rot.z -= speed; break;
-				case SDLK_PAGEDOWN:		if(ctx.simpleView) ctx.camera.rot.z += speed; break;
-				
-				case SDLK_p:			ctx.max_threshold += 1;	break;
-				case SDLK_m:			ctx.max_threshold -= 1;	break;
-				case SDLK_TAB:
-					update = true;
-					ctx.simpleView ^= 1;
-					break;
+	glutReshapeFunc(reshape);
+	glutKeyboardFunc(keyboard);
+	glutDisplayFunc(display);
+	glutSpecialFunc(keyboard_special);
+	glutTimerFunc(0, update, 1);
+	glutMainLoop();
 
-				default:
-					update = false;
-				}
-
-				if(!update)
-					break;
-
-				mean_time = 0;
-				ctx.sampleCount = 0;
-
-				ctx.camera.rotation_transform = transform_combine(
-					transform_combine(
-						transform_rotate_x(ctx.camera.rot.x),
-						transform_rotate_y(ctx.camera.rot.y)
-					), transform_rotate_z(ctx.camera.rot.z)
-				);
-				
-				break;
-			
-			case SDL_MOUSEMOTION:
-				ctx.mouse_pos.x = ev.motion.x;
-				ctx.mouse_pos.y = ev.motion.y;
-				break;
-
-			default:
-				break;
-		}
-	}
+	freeBuffers();
 
 exit:
 	printf("Error code : %i\n", err);

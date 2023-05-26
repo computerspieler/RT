@@ -20,26 +20,6 @@ void matrix_transpose(Matrix4x4 *out, Matrix4x4 m)
 			out->s[col + 4*row] = m.s[row + 4*col];
 }
 
-void matrix_mult(Matrix4x4 *out, Matrix4x4 m1, Matrix4x4 m2)
-{
-    // TODO: Utiliser un algo en compléxité < O(n^3)
-    for(int col = 0; col < 4; col++)
-        for(int row = 0; row < 4; row++) {
-			out->s[col + 4*row] = 0;
-            for(int i = 0; i < 4; i++)
-                out->s[col + 4*row] += m1.s[i + 4*row] * m2.s[col + 4*i];
-		}
-}
-
-void matrix_print(Matrix4x4 m)
-{
-    for(int i = 0; i < 4; i++) {
-        for(int j = 0; j < 4; j++)
-            printf(FLOAT_FMT ",", m.s[j + 4*i]);
-        printf("\n");
-    }
-}
-
 void matrix_swap_rows(Matrix4x4 *m, int i, int j)
 {
     for(int col = 0; col < 4; col++) {
@@ -96,8 +76,5 @@ void matrix_inverse(Matrix4x4 *out, Matrix4x4 m)
                 matrix_add_row(out, i, col, -m.s[col + 4*i]);
                 matrix_add_row(&m,  i, col, -m.s[col + 4*i]);
             }
-        
-        //printf("Row: %d; Col: %d\n", row, col);
-        //matrix_print(m); putchar('\n'); putchar('\n');
     }
 }

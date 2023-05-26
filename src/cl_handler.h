@@ -18,7 +18,6 @@ struct CLBuffer
 
     bool input;
     bool output;
-    bool image;
 };
 
 typedef struct OpenCL_GeneralContext OpenCL_GeneralContext;
@@ -59,9 +58,7 @@ cl_int opencl_init_program_context(OpenCL_ProgramContext *cl_prg);
 cl_int opencl_add_program_source(OpenCL_ProgramContext *cl_prg, char *text, size_t len);
 cl_int opencl_build_program(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, char* kernel_entry, const char *compile_flags);
 int opencl_add_input_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, void *buf, size_t len);
-int opencl_add_input_image(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, cl_uchar4 **raw, int width, int height);
 int opencl_add_input_output_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, void *buf, size_t len);
-int opencl_add_output_image(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, cl_uchar4 **raw, int width, int height);
 void opencl_prerun(OpenCL_ProgramContext *cl_prg);
 void opencl_run(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, size_t *origin, size_t *region);
 void opencl_postrun(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, size_t *origin, size_t *region);

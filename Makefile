@@ -9,19 +9,18 @@ PREFIX=
 CC=$(PREFIX)gcc
 CPP=$(PREFIX)gcc -E
 LD=$(PREFIX)gcc
-SDL_CONFIG=$(PREFIX)sdl-config
-CCFLAGS=-Wall -Wextra -Isrc -Ibin/headers -Iinclude -Icommon -c \
-	-Wno-incompatible-pointer-types `$(SDL_CONFIG) --cflags`
-CPPFLAGS=-Iinclude -P -nostdinc -D IN_OPENCL -fdirectives-only \
-	`$(SDL_CONFIG) --cflags`
-LDFLAGS=-lm `$(SDL_CONFIG) --libs` -lOpenCL
+CCFLAGS=-Wall -Wextra -Isrc -Ibin/headers -Iinclude -Icommon -c -Wno-unused-parameter
+CPPFLAGS=-Iinclude -P -nostdinc -D IN_OPENCL -fdirectives-only
+LDFLAGS=-lm -lOpenCL -lGL -lglut -lGLU
 
 all: debug
 
 clean:
 	rm -rf bin
 
+ifneq ($(MAKECMDGOALS),clean)
 -include $(DEPS)
+endif
 
 debug: bin/debug
 release: bin/release

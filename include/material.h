@@ -2,7 +2,6 @@
 #define _MATERIAL_H_
 
 #include "typedef.h"
-#include "spectrum.h"
 
 typedef enum MaterialType MaterialType;
 enum MaterialType
@@ -35,12 +34,10 @@ struct MaterialGlass
 typedef struct MaterialComplex MaterialComplex;
 struct MaterialComplex
 {
-    vec3 specular_color;
     Float specular_roughness;
     Float specular_IOR;
     Float metalness;
     Float transmission;
-    vec3 transmission_color;
     Float transmission_dispersion;
 };
 

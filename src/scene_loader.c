@@ -13,45 +13,8 @@
 #include "scene_loader.h"
 #include "array.h"
 #include "scene.h"
-#include "spectrum.h"
 #include "tree.h"
 #include "light.h"
-
-int readSpectrum(FILE *f, Spectrum *out)
-{
-    //FILE *fs;
-    //char *delim = " ";
-    Float constant;
-    char buffer[1024];
-
-    fscanf(f, "%s", buffer);
-
-    if(strcmp(buffer, "constant") == 0) {
-        fscanf(f, FLOAT_FMT "\n", &constant);
-        for(int i = 0; i < SPECTRUM_SIZE; i ++)
-            (*out)[i] = constant;
-    }
-    /*
-    else if(strcmp(buffer, "rgb") == 0)
-        fscanf(f, FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            &out->x, &out->y, &out->z);
-    */
-    else if(strcmp(buffer, "file") == 0) {
-        fscanf(f, "%s\n", buffer);
-        f = fopen(buffer, "r");
-        if(!f) {
-            perror("fopen (readSpectrum)");
-            return 0;
-        }
-
-        for(int i = 0; i < SPECTRUM_SIZE; i ++)
-            fscanf(f, FLOAT_FMT "\n", &((*out)[i]));
-
-        fclose(f);
-    }
-
-    return 1;
-}
 
 int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials)
 {
@@ -97,14 +60,7 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
                         fscanf(f, FLOAT_FMT "\n", &mat.g.IOR);
                     break;
 
-                default:
-                    /*
-                    if(strcmp(buffer, "Sc") == 0) {
-                        if(!readSpectrum(f, &mat.c.specular_color))
-                            goto err;
-                    }
-                    else */
-                    
+                default:                    
                     if(strcmp(buffer, "Sr") == 0) {
                         fscanf(f, FLOAT_FMT "\n", &mat.c.specular_roughness);
                     }
@@ -132,6 +88,58 @@ int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *mate
         array_push(materials, &mat);
 
     return 0;
+}
+
+void subdivideTriangles(Scene *obj, SceneMetadata *metadata, int subdivide)
+{
+	if(subdivide <= 0)	return;
+
+	obj->vertices = realloc(obj->vertices, (metadata->vertices_count + metadata->triangles_count) * sizeof(vec3));
+
+	for(size_t i = 0; i < metadata->triangles_count; i ++) {
+	    vec3 p0 = obj->vertices[obj->triangles[i].vertices[0]];
+	    vec3 p1 = obj->vertices[obj->triangles[i].vertices[1]];
+	    vec3 p2 = obj->vertices[obj->triangles[i].vertices[2]];
+
+		obj->vertices[i + metadata->vertices_count].x = (p0.x + p1.x + p2.x) / 3.;
+		obj->vertices[i + metadata->vertices_count].y = (p0.y + p1.y + p2.y) / 3.;
+		obj->vertices[i + metadata->vertices_count].z = (p0.z + p1.z + p2.z) / 3.;
+	}
+
+	obj->vertices_tex = realloc(obj->vertices_tex, (metadata->vertices_tex_count + metadata->triangles_count) * sizeof(vec2));
+
+	for(size_t i = 0; i < metadata->triangles_count; i ++) {
+	    vec2 p0 = obj->vertices_tex[obj->triangles[i].uv[0]];
+	    vec2 p1 = obj->vertices_tex[obj->triangles[i].uv[1]];
+	    vec2 p2 = obj->vertices_tex[obj->triangles[i].uv[2]];
+
+		obj->vertices_tex[i + metadata->vertices_tex_count].x = (p0.x + p1.x + p2.x) / 3.;
+		obj->vertices_tex[i + metadata->vertices_tex_count].y = (p0.y + p1.y + p2.y) / 3.;
+	}
+
+
+	obj->triangles = realloc(obj->triangles, 3 * metadata->triangles_count * sizeof(Triangle));
+
+	for(size_t i = 0; i < metadata->triangles_count; i ++) {
+		obj->triangles[metadata->triangles_count + 2 * i] = obj->triangles[i];
+		obj->triangles[metadata->triangles_count + 2 * i + 1] = obj->triangles[i];
+
+		obj->triangles[i].uv[2] = i + metadata->vertices_tex_count;
+		obj->triangles[i].vertices[2] = i + metadata->vertices_count;
+
+		obj->triangles[metadata->triangles_count + 2 * i].uv[0] = i + metadata->vertices_tex_count;
+		obj->triangles[metadata->triangles_count + 2 * i].vertices[0] = i + metadata->vertices_count;
+		
+		obj->triangles[metadata->triangles_count + 2 * i + 1].uv[1] = i + metadata->vertices_tex_count;
+		obj->triangles[metadata->triangles_count + 2 * i + 1].vertices[1] = i + metadata->vertices_count;
+	}
+
+
+	metadata->vertices_count += metadata->triangles_count;
+	metadata->vertices_tex_count += metadata->triangles_count;
+	metadata->triangles_count *= 3;
+
+	subdivideTriangles(obj, metadata, subdivide - 1);
 }
 
 int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
@@ -196,6 +204,8 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             triangle.uv[0] --;
             triangle.uv[1] --;
             triangle.uv[2] --;
+
+			triangle.original_id = array_size(&triangles);
 
             if(res != 6) {
                 printf("Invalid face (%d)\n", res);
@@ -277,6 +287,8 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
 		.lights = lights.array
     };
 
+	subdivideTriangles(obj, metadata, SUBDIVIDE_COUNT);
+
     buildBVHTreeFromObject(*obj, metadata);
 
     for(size_t i = 0; i < metadata->triangles_count; i ++) {
@@ -307,13 +319,16 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
             uv1.y - uv2.y
         );
 
-	    obj->triangles[i].normal = vec3_normalize(vec3_cross(vec3_diff(p2, p0), vec3_diff(p1, p0)));
+	    obj->triangles[i].normal = vec3_cross(vec3_diff(p2, p0), vec3_diff(p1, p0));
+
+		obj->triangles[i].area = vec3_norm(obj->triangles[i].normal) * .5;
+		obj->triangles[i].normal = vec3_normalize(obj->triangles[i].normal);
+
         Float det = duv02.x * duv12.y - duv02.y * duv12.x;
 
         if(det == 0)
             vec3_build_coordonate_system(obj->triangles[i].normal, &obj->triangles[i].dpdu, &obj->triangles[i].dpdv);
         else {
-            float invDet = 1. / det;
             obj->triangles[i].dpdu = vec3_normalize(
                 vec3_diff(vec3_smul(duv12.y, dp02), vec3_smul(duv02.y, dp12))
             );
@@ -321,37 +336,6 @@ int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv)
                 vec3_diff(vec3_smul(duv02.x, dp12), vec3_smul(duv12.x, dp02))
             );
         }
-
-        printf("=== Triangle id: %zu ===\n", i);
-        printf("Points %ld %ld %ld\n",
-            obj->triangles[i].vertices[0],
-            obj->triangles[i].vertices[1],
-            obj->triangles[i].vertices[2]);
-        printf("Point 0 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            p0.x, p0.y, p0.z);
-        printf("Point 1 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            p1.x, p1.y, p1.z);
-        printf("Point 2 " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            p2.x, p2.y, p2.z);
-        printf("UV 0 " FLOAT_FMT " " FLOAT_FMT "\n",
-            uv0.x, uv0.y);
-        printf("UV 1 " FLOAT_FMT " " FLOAT_FMT "\n",
-            uv1.x, uv1.y);
-        printf("UV 2 " FLOAT_FMT " " FLOAT_FMT "\n",
-            uv2.x, uv2.y);
-        printf("Det: " FLOAT_FMT "\n", det);
-        printf("Normal: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            obj->triangles[i].normal.x,
-            obj->triangles[i].normal.y,
-            obj->triangles[i].normal.z);
-        printf("DPDU: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            obj->triangles[i].dpdu.x,
-            obj->triangles[i].dpdu.y,
-            obj->triangles[i].dpdu.z);
-        printf("DPDV: " FLOAT_FMT " " FLOAT_FMT " " FLOAT_FMT "\n",
-            obj->triangles[i].dpdv.x,
-            obj->triangles[i].dpdv.y,
-            obj->triangles[i].dpdv.z);
     }
 
 	printf("==== BVH Tree ====\n");
@@ -373,68 +357,6 @@ err:
 
     return -1;
 }
-
-/*
-int mergeObjects(Scene *obj1, SceneMetadata *obj1_meta, Scene *obj2, SceneMetadata *obj2_meta, Scene *output, SceneMetadata *output_meta)
-{
-    assert(obj1);
-    assert(obj2);
-    assert(obj1_meta);
-    assert(obj2_meta);
-    assert(output);
-    assert(output_meta);
-
-    output_meta->groups_count = obj1_meta->groups_count + obj2_meta->groups_count;
-    output_meta->vertices_count = obj1_meta->vertices_count + obj2_meta->vertices_count;
-    output_meta->materials_count = obj1_meta->materials_count + obj2_meta->materials_count;
-    output_meta->triangles_count = obj1_meta->triangles_count + obj2_meta->triangles_count;
-    output_meta->vertices_tex_count = obj1_meta->vertices_tex_count + obj2_meta->vertices_tex_count;
-    output_meta->vertices_normal_count = obj1_meta->vertices_normal_count + obj2_meta->vertices_normal_count;
-    output_meta->bounds = bbox_b_union(obj1_meta->bounds, obj2_meta->bounds);
-
-    output->materials = malloc(sizeof(Material) * output_meta->materials_count);
-    output->triangles = malloc(sizeof(Triangle) * output_meta->triangles_count);
-    output->vertices = malloc(sizeof(vec3) * output_meta->vertices_count);
-    output->vertices_tex = malloc(sizeof(vec2) * output_meta->vertices_tex_count);
-    output->vertices_normal = malloc(sizeof(vec3) * output_meta->vertices_normal_count);
-    output_meta->groups_name = malloc(sizeof(char*) * output_meta->groups_count);
-
-    memcpy(output_meta->groups_name, obj1_meta->groups_name, sizeof(char*) * obj1_meta->groups_count);
-    memcpy(output_meta->groups_name + obj1_meta->groups_count, obj2_meta->groups_name, sizeof(char*) * obj2_meta->groups_count);
-
-    memcpy(output->materials, obj1->materials, sizeof(Material) * obj1_meta->materials_count);
-    memcpy(output->materials + obj1_meta->materials_count, obj2->materials, sizeof(Material) * obj2_meta->materials_count);
-
-    memcpy(output->vertices, obj1->vertices, sizeof(vec3) * obj1_meta->vertices_count);
-    memcpy(output->vertices + obj1_meta->vertices_count, obj2->vertices, sizeof(vec3) * obj2_meta->vertices_count);
-
-    memcpy(output->vertices_tex, obj1->vertices_tex, sizeof(vec2) * obj1_meta->vertices_tex_count);
-    memcpy(output->vertices_tex + obj1_meta->vertices_tex_count, obj2->vertices_tex, sizeof(vec2) * obj2_meta->vertices_tex_count);
-
-    memcpy(output->triangles, obj1->triangles, sizeof(Triangle) * obj1_meta->triangles_count);
-    for(size_t i = 0; i < obj2_meta->triangles_count; i++)
-        output->triangles[i + obj1_meta->triangles_count] = (Triangle) {
-            .group = obj2->triangles[i].group + obj1_meta->groups_count,
-            .material = obj2->triangles[i].material + obj1_meta->materials_count,
-            .vertices = {
-                obj2->triangles[i].vertices[0] + obj1_meta->vertices_count,
-                obj2->triangles[i].vertices[1] + obj1_meta->vertices_count,
-                obj2->triangles[i].vertices[2] + obj1_meta->vertices_count
-            },
-            .uv = {
-                obj2->triangles[i].uv[0] + obj1_meta->vertices_tex_count,
-                obj2->triangles[i].uv[1] + obj1_meta->vertices_tex_count,
-                obj2->triangles[i].uv[2] + obj1_meta->vertices_tex_count
-            },
-            .surfaceNormal = obj2->triangles[i].surfaceNormal,
-            .det = obj2->triangles[i].det
-        };
-
-    return 0;
-}
-*/
-
-#define BUCKET_COUNT 10
 
 typedef struct PrimitiveInfo PrimitiveInfo;
 struct PrimitiveInfo
@@ -688,13 +610,27 @@ void printObjectInfo(SceneMetadata metadata)
 {
     printf("================\n");
     printf("%ld triangles\n", metadata.triangles_count);
-    printf("%ld vertices\n", metadata.vertices_count);
-    printf("%ld texture coordonates\n", metadata.vertices_tex_count);
-    printf("%ld meterials\n", metadata.materials_count);
-    printf("BVH Tree depth: %u\n", BVHTree_depth(metadata.tree.nodes, metadata.tree.root));
+    printf("%ld sommets\n", metadata.vertices_count);
+    printf("%ld coordonnées de textures\n", metadata.vertices_tex_count);
+    printf("%ld matériaux\n", metadata.materials_count);
+    printf("Profondeur de l'arbre BVH: %u\n", BVHTree_depth(metadata.tree.nodes, metadata.tree.root));
     //printBVHTree(metadata.tree.nodes, metadata.tree.root, 0);
-    printf("Groups:\n");
+    printf("Groupes:\n");
     for(size_t i = 0; i < metadata.groups_count; i ++)
         printf(" - \"%s\"\n", metadata.groups_name[i]);
     printf("================\n");
+}
+
+void scene_delete(Scene *obj, SceneMetadata *metadata)
+{
+	assert(obj);
+	assert(metadata);
+
+	free(obj->vertices);
+	free(obj->vertices_tex);
+	free(obj->triangles);
+	free(obj->materials);
+	free(obj->lights);
+	free(metadata->groups_name);
+	free(metadata->tree.nodes);
 }

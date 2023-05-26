@@ -1,0 +1,17 @@
+# Blender 3.4.1
+# www.blender.org
+mtllib scene/plane.mtl
+usemtl Plane
+
+v 1 -1 -1
+v 1  1 -1
+v 1  1  1
+v 1 -1  1
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+f 1/1 2/2 3/3
+f 1/1 3/3 4/4
+
+lp 0 0 0   100

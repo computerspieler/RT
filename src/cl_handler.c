@@ -125,13 +125,12 @@ int opencl_add_input_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext
     buffer = (CLBuffer) {
         .cl = clCreateBuffer(
             cl_gen->context,
-            CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+            CL_MEM_READ_ONLY | CL_MEM_USE_HOST_PTR,
             len, buf,
             &err
         ),
         .buf = buf,
         .len = len,
-        .image = false,
         .input = true,
         .output = false
     };
@@ -156,8 +155,7 @@ int opencl_add_input_output_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_Program
         ),
         .buf = buf,
         .len = len,
-        .image = false,
-        .input = false,
+        .input = true,
         .output = true
     };
     CHECK_ERR(clCreateBuffer, exit);    
@@ -165,78 +163,6 @@ int opencl_add_input_output_buffer(OpenCL_GeneralContext *cl_gen, OpenCL_Program
 
 exit:
     return err;
-}
-
-int opencl_add_output_image(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, cl_uchar4 **raw, int width, int height)
-{
-    cl_int err;
-
-    if(!*raw)
-        *raw = malloc(width * height * sizeof(cl_uchar4));
-
-    cl_image_desc output_buffer_desc = { 0 };
-    output_buffer_desc.image_width  = width;
-    output_buffer_desc.image_height = height;
-    output_buffer_desc.image_type   = CL_MEM_OBJECT_IMAGE2D;
-
-    const cl_image_format fmt = {
-        .image_channel_order = CL_RGBA,
-        .image_channel_data_type = CL_UNSIGNED_INT8
-    };
-    
-    CLBuffer buffer = {
-        .cl = clCreateImage(
-            cl_gen->context, CL_MEM_WRITE_ONLY,
-            &fmt, &output_buffer_desc,
-            NULL, &err
-        ),
-        .image = true,
-        .input = false,
-        .output = true,
-        .buf = *raw,
-        .len = width * height * sizeof(cl_uchar4)
-    };
-    CHECK_ERR(clCreateImage, exit);
-    array_push(&cl_prg->buffers, &buffer);
-
-exit:
-    return err;   
-}
-
-int opencl_add_input_image(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, cl_uchar4 **raw, int width, int height)
-{
-    cl_int err;
-
-    if(!*raw)
-        *raw = malloc(width * height * sizeof(cl_uchar4));
-
-    cl_image_desc output_buffer_desc = { 0 };
-    output_buffer_desc.image_width  = width;
-    output_buffer_desc.image_height = height;
-    output_buffer_desc.image_type   = CL_MEM_OBJECT_IMAGE2D;
-
-    const cl_image_format fmt = {
-        .image_channel_order = CL_RGBA,
-        .image_channel_data_type = CL_UNSIGNED_INT8
-    };
-    
-    CLBuffer buffer = {
-        .cl = clCreateImage(
-            cl_gen->context, CL_MEM_READ_ONLY,
-            &fmt, &output_buffer_desc,
-            NULL, &err
-        ),
-        .image = true,
-        .input = true,
-        .output = false,
-        .buf = *raw,
-        .len = width * height * sizeof(cl_uchar4)
-    };
-    CHECK_ERR(clCreateImage, exit);
-    array_push(&cl_prg->buffers, &buffer);
-
-exit:
-    return err;   
 }
 
 void opencl_prerun(OpenCL_ProgramContext *cl_prg)
@@ -250,11 +176,11 @@ void opencl_prerun(OpenCL_ProgramContext *cl_prg)
 void opencl_run(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg, size_t *origin, size_t *region)
 {
     cl_int err;
-    size_t local[3] = {8, 8, 1};
+    size_t local[3] = {1, 1, 1};
 
     TRY(clEnqueueNDRangeKernel, exit,
         cl_gen->queue, cl_prg->kern, 2, origin, region, local, 0, NULL, NULL);
-	clFinish(cl_gen->queue);
+
 exit:
     return;
 }
@@ -266,38 +192,24 @@ void opencl_postrun(OpenCL_GeneralContext *cl_gen, OpenCL_ProgramContext *cl_prg
 
     i = 0;
     for(CLBuffer* it = cl_prg->buffers.array; i < array_size(&cl_prg->buffers); it ++, i++) {
-		if(it->image && it->input)
-			TRY(clEnqueueWriteImage, exit,
-				cl_gen->queue, it->cl, CL_TRUE,
-				origin, region,
-				0, 0,
-				it->buf, 0,
-				NULL, NULL
-			);
-		if(it->image && it->output)
-			TRY(clEnqueueReadImage, exit,
-				cl_gen->queue, it->cl, CL_TRUE,
-				origin, region,
-				0, 0,
-				it->buf, 0,
-				NULL, NULL
-			);
-		if(!it->image && it->input)
-			TRY(clEnqueueWriteBuffer, exit,
-				cl_gen->queue, it->cl, CL_FALSE, 0,
-				it->len, it->buf,
-				0, NULL, NULL
-			);
-		if(!it->image && it->output)
+
+		if(it->output)
 			TRY(clEnqueueReadBuffer, exit,
 				cl_gen->queue, it->cl, CL_TRUE,
 				0, it->len,
 				it->buf, 0,
 				NULL, NULL
 			);
-
-		clFinish(cl_gen->queue);
+			
+		if(it->input)
+			TRY(clEnqueueWriteBuffer, exit,
+				cl_gen->queue, it->cl, CL_FALSE, 0,
+				it->len, it->buf,
+				0, NULL, NULL
+			);
     }
+	
+	clFinish(cl_gen->queue);
 
 exit:
     return;

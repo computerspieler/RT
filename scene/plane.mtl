@@ -1,6 +1,6 @@
 newmtl Plane 1
 R 0.9
 
-newmtl None 0
-
+newmtl None 1
+R 0
 

@@ -10,7 +10,8 @@
 
 int loadFromMtl(FILE *f, Node *materials_tree, Array *material_name, Array *materials);
 int loadFromObj(FILE *f, Scene *obj, SceneMetadata *metadata, bool use_uv);
-//int mergeObjects(Scene *obj1, SceneMetadata *obj1_meta, Scene *obj2, SceneMetadata *obj2_meta, Scene *output, SceneMetadata *output_meta);
+
+void scene_delete(Scene *obj, SceneMetadata *metadata);
 
 void printObjectInfo(SceneMetadata metadata);
 uint BVHTree_depth(BVHNode* tree, int root);

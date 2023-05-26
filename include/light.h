@@ -14,13 +14,15 @@ typedef struct Light Light;
 struct Light
 {
     vec3 pos;
+    LightType type;
+    Float I;
+
+	// Specifique à l'éclairage par une surface
 	vec3 area_n;
 	vec3 area_tan;
 	vec3 area_bitan;
 	Float area_width;
 	Float area_height;
-    LightType type;
-    Float I;
 };
 
 #endif
